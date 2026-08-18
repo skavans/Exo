@@ -2,7 +2,7 @@
   "name": "exo",
   "displayName": "Exo",
   "description": "Native VS Code client for ACP agents: spawns your agent over stdio, renders chat, and handles file access, permissions and plans with native editor UX.",
-  "version": "0.0.409",
+  "version": "0.1.0",
   "license": "GPL-3.0",
   "engines": {
     "vscode": "^1.73.0"
