@@ -1,5 +1,9 @@
 # Exo
 
+<p align="center">
+  <img src="media/screenshot.png" alt="Exo — ACP client in the VS Code sidebar" width="560"/>
+</p>
+
 A VS Code extension that gives you a clean, native interface for talking to an
 [ACP](https://agentclientprotocol.com/get-started/introduction) agent.
 
@@ -30,7 +34,7 @@ way: a **pure ACP client**. That turned out great, and this is the result.
 
 ## Status
 
-Works nearly perfectly with [opencode](https://github.com/sst/opencode) out of the
+Works nearly perfectly with [opencode](https://github.com/anomalyco/opencode) out of the
 box. Other ACP agents are on the roadmap — they should work, but expect rough
 edges and report them.
 
