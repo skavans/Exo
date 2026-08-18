@@ -104,6 +104,16 @@ The current state already satisfies my daily workflow, so development will be
 steady, not frantic. **Pull requests that improve things within this paradigm are
 welcome.**
 
+## Support
+
+If you like Exo, a tip is always appreciated:
+
+| Asset | Address |
+|---|---|
+| **BTC** | `bc1qfwyp3xpd85la70eqaujnlmz947hs7zrqgn7uux` |
+| **ETH** | `0xE77d7d538A2E53F474aB2d11081B69cb90b35E67` |
+| **TON** | `UQApS03GSZ0s_0x5wghz9vygDA61GSAcSf-yZBgcjXge3oWe` |
+
 ## License
 
 GPL-3.0
