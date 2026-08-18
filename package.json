@@ -1,9 +1,14 @@
 {
   "name": "exo",
   "displayName": "Exo",
+  "publisher": "AntonSubbotin",
   "description": "Native VS Code client for ACP agents: spawns your agent over stdio, renders chat, and handles file access, permissions and plans with native editor UX.",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/skavans/Exo.git"
+  },
   "engines": {
     "vscode": "^1.73.0"
   },
