@@ -75,6 +75,10 @@ export class WebviewMessageHandler {
 				this.provider.showSessionList();
 				break;
 			}
+			case 'openConfig': {
+				void vscode.commands.executeCommand('exo.openConfig');
+				break;
+			}
 			case 'updateDraftState': {
 				const text = typeof message.text === 'string' ? message.text : '';
 				const attachedFiles = Array.isArray(message.attachedFiles)

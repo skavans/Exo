@@ -119,3 +119,76 @@ body {
 	font-size: var(--ct-text-sm);
 	color: var(--ct-text-muted);
 }
+
+/* ============================================================
+   Config Required (onboarding screen)
+   ============================================================ */
+
+.config-required-view {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: var(--ct-space-3xl);
+}
+
+.config-required-card {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	text-align: center;
+	gap: var(--ct-space-md);
+	max-width: 280px;
+}
+
+.config-required-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 56px;
+	height: 56px;
+	border-radius: var(--ct-radius-lg);
+	background: var(--ct-bg-hover);
+	color: var(--ct-text-secondary);
+	margin-bottom: var(--ct-space-sm);
+}
+
+.config-required-title {
+	font-size: var(--ct-text-base);
+	font-weight: 600;
+	color: var(--ct-text-primary);
+	line-height: var(--ct-lh-normal);
+}
+
+.config-required-hint {
+	font-size: var(--ct-text-sm);
+	color: var(--ct-text-muted);
+	line-height: var(--ct-lh-normal);
+}
+
+.config-required-path {
+	font-family: var(--ct-font-mono);
+	font-size: calc(var(--ct-text-sm) - 1px);
+	color: var(--ct-text-secondary);
+	background: var(--ct-code-inline-bg);
+	padding: var(--ct-space-xs) var(--ct-space-sm);
+	border-radius: var(--ct-radius-xs);
+	word-break: break-all;
+	max-width: 100%;
+}
+
+.config-required-btn {
+	margin-top: var(--ct-space-md);
+	padding: var(--ct-space-sm) var(--ct-space-xl);
+	background: var(--ct-accent);
+	color: var(--ct-accent-text);
+	border: none;
+	border-radius: var(--ct-radius-sm);
+	font-size: var(--ct-text-sm);
+	cursor: pointer;
+	transition: opacity var(--ct-transition-fast);
+}
+
+.config-required-btn:hover {
+	opacity: 0.9;
+}

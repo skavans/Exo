@@ -6,6 +6,7 @@ import { MessageList } from './components/MessageList';
 import { MessageInput } from './components/MessageInput';
 import { TodoList } from './components/TodoList';
 import { SessionList } from './components/SessionList';
+import { ConfigRequired } from './components/ConfigRequired';
 import { resolveThemeId, setTheme, getThemeVersion, type ThemeKind } from './shiki';
 
 type ViewMode = 'list' | 'chat';
@@ -35,6 +36,8 @@ export function App() {
 	const [promptCapabilities, setPromptCapabilities] = useState<{ image: boolean }>({ image: false });
 	const [colorThemeName, setColorThemeName] = useState<string | null>(null);
 	const [themeVersion, setThemeVersion] = useState(() => getThemeVersion());
+	const [configRequired, setConfigRequired] = useState(false);
+	const [configPath, setConfigPath] = useState<string | null>(null);
 
 	// Keep a ref to the latest theme name so applyTheme always reads a fresh
 	// value, never a stale closure (the host message and the MutationObserver
@@ -105,6 +108,7 @@ export function App() {
 			case 'updateSessionList': {
 				setSessionList(message.sessions as AcpSessionInfo[]);
 				setView('list');
+				setConfigRequired(false);
 				break;
 			}
 			case 'showChat': {
@@ -115,9 +119,16 @@ export function App() {
 				setTokenUsage(null);
 				setTokenLimit(null);
 				setView('chat');
+				setConfigRequired(false);
 				break;
 			}
 			case 'showSessionList': {
+				setView('list');
+				break;
+			}
+			case 'showConfigRequired': {
+				setConfigRequired(true);
+				setConfigPath(typeof message.configPath === 'string' ? message.configPath : null);
 				setView('list');
 				break;
 			}
@@ -193,6 +204,10 @@ export function App() {
 		observer.observe(document.body, { attributes: true, attributeFilter: ['data-vscode-theme-kind'] });
 		return () => observer.disconnect();
 	}, [applyTheme]);
+
+	if (configRequired) {
+		return <ConfigRequired configPath={configPath} />;
+	}
 
 	if (view === 'list') {
 		return <SessionList sessions={sessionList} agentInfo={agentInfo} />;

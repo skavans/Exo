@@ -93,6 +93,7 @@ Exo is a VS Code extension that provides an interface to an autonomous AI agent 
     - `ErrorBoundary.tsx` — Preact class boundary with fallback + retry.
     - `MessageInput.tsx` — input with unified `@`/`/` popup picker (single state machine, scans backwards from cursor for nearest unbroken trigger), config selectors, fuzzy highlighting, controlled textarea mirrored to host. Drag-drop (files + images), paste (images), image chips, file chips. Auto-Allow Lock toggle. Reject-with-response input.
     - `SessionList.tsx` — agent session list with header (inline title + agent label), relative-time, delete buttons, empty state.
+    - `ConfigRequired.tsx` — onboarding screen shown when `config.yml` has no agents. Explains that Exo needs an ACP agent, shows the config path, offers an "Open config.yml" button (sends `openConfig`).
     - `TodoList.tsx` — collapsible plan widget with progress bar, step icons (✓/●/○), current-step highlight.
     - `PlanCard.tsx` — **DELETED (was dead code, replaced by `TodoList`).**
 
@@ -180,8 +181,8 @@ Exo is a VS Code extension that provides an interface to an autonomous AI agent 
     - **Handlers (Agent → Client → Host):** `client/fs/readTextFile|writeTextFile`, `client/session/requestPermission`.
 
 - **Webview ↔ Host postMessage contracts (internal, non-ACP):**
-    - **UI → Host:** `ready`; `sendMessage` (`text`, `attachedFiles?`, `images?`); `selectConfigOption` (`configId`,`value`); `toggleAutoAllowPermissions`; `permissionDecision` (`requestId`, `optionId`|`cancelled`, `followUpText?`); `stopGeneration`; `newSession`; `openSession` (`sessionId`); `deleteSession` (`sessionId`); `showSessionList`; `searchFiles` (`query`); `updateDraftState` (`text`,`attachedFiles`); `openFile` (`path`,`line?`,`endLine?`); `resolveFileLinks` (`requestId`,`paths`); `addDroppedFiles` (`paths`).
-    - **Host → UI:** `updateMessages`; `updateConfig`; `updatePlan`; `updateCommands`; `updateSessionList`; `showChat` (carries `sessionId` for `MessageList` remount); `showSessionList`; `sessionTitleUpdate`; `updateTokenUsage` (`usage`,`tokenLimit?`); `updateAgentRunning` (`running`); `searchFilesResult`; `streamChunk` (`index`,`blocks`); `updateAutoAllowPermissions` (`value`); `restoreDraft` (`text`,`attachedFiles`); `updateAgentInfo` (`agentInfo`); `updatePromptCapabilities` (`{ image }`); `updateColorTheme` (`{ name }`); `resolveFileLinksResult` (`requestId`,`resolved`); `addDroppedFilesResult` (`files`,`rejected`).
+    - **UI → Host:** `ready`; `sendMessage` (`text`, `attachedFiles?`, `images?`); `selectConfigOption` (`configId`,`value`); `toggleAutoAllowPermissions`; `permissionDecision` (`requestId`, `optionId`|`cancelled`, `followUpText?`); `stopGeneration`; `newSession`; `openSession` (`sessionId`); `deleteSession` (`sessionId`); `showSessionList`; `searchFiles` (`query`); `updateDraftState` (`text`,`attachedFiles`); `openFile` (`path`,`line?`,`endLine?`); `resolveFileLinks` (`requestId`,`paths`); `addDroppedFiles` (`paths`); `openConfig`.
+    - **Host → UI:** `updateMessages`; `updateConfig`; `updatePlan`; `updateCommands`; `updateSessionList`; `showChat` (carries `sessionId` for `MessageList` remount); `showSessionList`; `sessionTitleUpdate`; `updateTokenUsage` (`usage`,`tokenLimit?`); `updateAgentRunning` (`running`); `searchFilesResult`; `streamChunk` (`index`,`blocks`); `updateAutoAllowPermissions` (`value`); `restoreDraft` (`text`,`attachedFiles`); `updateAgentInfo` (`agentInfo`); `updatePromptCapabilities` (`{ image }`); `updateColorTheme` (`{ name }`); `resolveFileLinksResult` (`requestId`,`resolved`); `addDroppedFilesResult` (`files`,`rejected`); `showConfigRequired` (`configPath`).
 
 ## 6. Development and Operations
 

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { getConfigPath } from '../config';
 import type { ConfigWatcher } from '../configWatcher';
 import { Files } from '../files/Files';
 import type { ChatMessage, PendingPermission, ToolCallInfo } from './types';
@@ -136,6 +137,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 		this.configWatcher.onConfigChange(() => {
 			this.sendConfig();
+			if (this.configWatcher.config.agents?.length) {
+				void this.handleReady();
+			} else {
+				this.showConfigRequired();
+			}
 		});
 
 		webviewView.webview.onDidReceiveMessage((message) => {
@@ -161,6 +167,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			this.restorePersistedUiState();
 		}
 		this.postDraftState();
+		if (!this.configWatcher.config.agents?.length) {
+			this.showConfigRequired();
+			return;
+		}
 		try {
 			await this.connectAcp(this.getWorkspaceRoot());
 			await this.refreshSessionList();
@@ -278,6 +288,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this._viewMode = 'list';
 		this.persistUiStateSoon();
 		this.view?.webview.postMessage({ type: 'showSessionList' });
+	}
+
+	/** Show the "no agent configured" onboarding screen in the webview. */
+	public showConfigRequired(): void {
+		this._viewMode = 'list';
+		this.view?.webview.postMessage({ type: 'showConfigRequired', configPath: getConfigPath() });
 	}
 
 	/** Refresh the session list from the agent (session/list). */
