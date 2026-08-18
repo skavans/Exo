@@ -1,20 +1,22 @@
-# Exo
+# Exo — AI Coding Agent Client for VS Code
 
 <p align="center">
-  <img src="media/screenshot.png" alt="Exo — ACP client in the VS Code sidebar" width="560"/>
+  <img src="media/screenshot.png" alt="Exo — AI coding assistant in the VS Code sidebar" width="560"/>
 </p>
 
-A VS Code extension that gives you a clean, native interface for talking to an
-[ACP](https://agentclientprotocol.com/get-started/introduction) agent.
+A **self-hosted AI coding assistant** that lives in your VS Code sidebar. Exo
+connects to any [ACP](https://agentclientprotocol.com/get-started/introduction)-compatible
+agent — [opencode](https://github.com/anomalyco/opencode), Claude Code, Aider,
+or your own — and gives you a clean, native interface for the conversation.
 
-Exo is not an agent. It is a client: it spawns your agent as a child process
+Exo is not an agent. It is a **client**: it spawns your agent as a child process
 (via stdio/ACP), renders the conversation in the sidebar, and handles the
-agent&#8217;s requests (file access, permissions, config, plans) with native VS Code
+agent's requests (file access, permissions, config, plans) with native VS Code
 UX. The agent stays fully in control of its state, sessions, and history.
 
-## Why a VS Code extension?
+## Why?
 
-Because reading and writing code is much better in a human editor than in a TUI:
+Because reading and writing code is much better in a real editor than in a TUI:
 
 - Proper typography and readable, syntax-highlighted markdown.
 - Code you can actually look at: hover, jump-to-definition, search, multiline diffs.
@@ -25,12 +27,13 @@ Because reading and writing code is much better in a human editor than in a TUI:
 Everything the agent produces is rendered against the rest of your VS Code
 workspace, not in an isolated terminal box.
 
-## Why not just keep using Cline / KiloCode?
+## The story
 
-I used to love them — until they were abandoned or ruined by being ported to a
-new engine, at which point they became genuinely unpleasant to use. Building a
-fully self-hosted agent is a much bigger project (I did try), so I went the other
-way: a **pure ACP client**. That turned out great, and this is the result.
+I used to love Cline and KiloCode — until one was abandoned and the other was
+ported to a new engine that turned it into something genuinely unpleasant to use.
+Building a fully self-hosted agent is a much bigger project (I did try), so I went
+the other way: a **pure ACP client**. That turned out great, and this is the
+result.
 
 ## Status
 
