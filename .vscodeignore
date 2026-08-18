@@ -1,0 +1,36 @@
+# ============================================================
+# .vscodeignore — only runtime-required files end up in the VSIX.
+# Everything is bundled by esbuild (bundle: true) into
+# out/extension.js and out/webview.js, so node_modules and
+# sources are not needed.
+# ============================================================
+
+# --- Source code (compiled output is in out/) ---
+src/**
+webview-ui/src/**
+webview-ui/tsconfig.json
+
+# --- Bundled deps / external repos (not needed at runtime) ---
+node_modules/**
+
+# --- Build configs & tooling ---
+esbuild.mjs
+tsconfig.json
+tsconfig.webview.json
+eslint.config.mjs
+
+# --- AI / dev memory ---
+AGENTS.md
+
+# --- VS Code / git dev ---
+.vscode/**
+.vscodeignore
+.gitignore
+.git/**
+
+# --- Sourcemaps (all nesting levels) ---
+**/*.map
+
+# --- Dev artifacts ---
+*.vsix
+.DS_Store

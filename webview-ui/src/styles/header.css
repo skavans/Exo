@@ -1,0 +1,107 @@
+/* ============================================================
+   Chat Header
+   ============================================================ */
+
+.chat-header {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-sm);
+	padding: var(--ct-space-sm) var(--ct-space-lg);
+	border-bottom: 1px solid var(--ct-border-default);
+	flex-shrink: 0;
+}
+
+.back-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	border: none;
+	color: var(--ct-icon);
+	cursor: pointer;
+	padding: var(--ct-space-2xs);
+	border-radius: var(--ct-radius-xs);
+	transition: color var(--ct-transition-fast), background var(--ct-transition-fast);
+	flex-shrink: 0;
+}
+
+.back-btn:hover {
+	color: var(--ct-text-primary);
+	background: var(--ct-bg-hover);
+}
+
+.chat-header-title {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	white-space: nowrap;
+}
+
+.chat-header-title-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: var(--ct-text-sm);
+	font-weight: 500;
+	color: var(--ct-text-primary);
+}
+
+.chat-header-agent {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	flex-shrink: 0;
+	max-width: 50%;
+	font-size: 11px;
+	line-height: 1.2;
+	color: var(--ct-text-secondary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.chat-header-agent::before {
+	content: '';
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--ct-mode, var(--ct-icon));
+	flex-shrink: 0;
+	opacity: 0.9;
+}
+
+.chat-header-tokens {
+	flex-shrink: 0;
+	font-size: var(--ct-text-xs);
+	font-family: var(--ct-font-mono);
+	color: var(--ct-text-secondary);
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Context progress — thin bar along the header's bottom edge */
+.chat-header-bar {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 2px;
+	pointer-events: none;
+}
+
+.chat-header-bar-fill {
+	height: 100%;
+	background: var(--ct-accent);
+	transition: width 400ms ease, background 300ms ease;
+}
+
+.chat-header-bar-fill.warning {
+	background: var(--ct-status-warning);
+}
+
+.chat-header-bar-fill.danger {
+	background: var(--ct-status-danger);
+}

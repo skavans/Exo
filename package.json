@@ -1,0 +1,96 @@
+{
+  "name": "exo",
+  "displayName": "Exo",
+  "description": "Native VS Code client for ACP agents: spawns your agent over stdio, renders chat, and handles file access, permissions and plans with native editor UX.",
+  "version": "0.0.409",
+  "license": "GPL-3.0",
+  "engines": {
+    "vscode": "^1.73.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "exo-sidebar",
+          "title": "Exo",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "exo-sidebar": [
+        {
+          "type": "webview",
+          "id": "exo.chatView",
+          "name": "Chat",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "exo.openChat",
+        "title": "Exo: Open Chat"
+      },
+      {
+        "command": "exo.openConfig",
+        "title": "Exo: Open Config",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "exo.newSession",
+        "title": "Exo: New Session",
+        "icon": "$(add)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "exo.newSession",
+          "when": "view == exo.chatView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "exo.openConfig",
+          "when": "view == exo.chatView",
+          "group": "navigation@2"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile -- --production",
+    "compile": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "install-local": "npm version patch --no-git-tag-version && npm run compile -- --production && rm -f exo-*.vsix && npx vsce package && (codium-insiders --install-extension exo-*.vsix || codium --install-extension exo-*.vsix || code --install-extension exo-*.vsix)",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@agentclientprotocol/sdk": "^1.1.0",
+    "@fortawesome/fontawesome-free": "^7.3.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "22.x",
+    "@types/vscode": "1.73.0",
+    "@typescript-eslint/eslint-plugin": "^8.42.0",
+    "@typescript-eslint/parser": "^8.42.0",
+    "@vscode/vsce": "^3.6.0",
+    "dompurify": "^3.4.11",
+    "esbuild": "^0.28.0",
+    "eslint": "^9.34.0",
+    "js-yaml": "^4.1.1",
+    "katex": "^0.17.0",
+    "marked": "^18.0.2",
+    "marked-katex-extension": "^5.1.10",
+    "preact": "^10.29.1",
+    "typescript": "^5.9.2",
+    "zod": "^4.4.3"
+  },
+  "dependencies": {
+    "shiki": "^4.3.1"
+  }
+}

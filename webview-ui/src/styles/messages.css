@@ -1,0 +1,199 @@
+/* ============================================================
+   Message List
+   ============================================================ */
+
+.messages-container {
+	position: relative;
+	flex: 1;
+	min-height: 0;
+}
+
+/* Named scroll timeline for scroll-driven edge shadows.
+   The pseudo-elements below react to the scroll position of #messages:
+   the top shadow fades in when scrolled down, the bottom one until the end is reached.
+   Fallback: if animation-timeline is unsupported, opacity stays 0
+   from the keyframe `from` — no shadows, but the layout doesn't break. */
+#messages {
+	scroll-timeline-name: --messages-scroll;
+	scroll-timeline-axis: block;
+}
+
+/* Top edge shadow: fades out at the very top, appears when scrolled down.
+   Linear-gradient gives a perfectly soft falloff into transparent —
+   unlike an inset box-shadow, which clips at the pseudo-element's edge. */
+.messages-container::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 20px;
+	z-index: 1;
+	pointer-events: none;
+	background: linear-gradient(to bottom, var(--ct-edge-shadow), transparent);
+	animation: ct-edge-shadow-in linear forwards;
+	animation-timeline: --messages-scroll;
+	animation-range: 0 20px;
+}
+
+/* Bottom edge shadow: visible while there's room to scroll, fades at the very end. */
+.messages-container::after {
+	content: '';
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	height: 20px;
+	z-index: 1;
+	pointer-events: none;
+	background: linear-gradient(to top, var(--ct-edge-shadow), transparent);
+	animation: ct-edge-shadow-out linear backwards;
+	animation-timeline: --messages-scroll;
+	animation-range: calc(100% - 20px) 100%;
+}
+
+@keyframes ct-edge-shadow-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+@keyframes ct-edge-shadow-out {
+	from { opacity: 1; }
+	to { opacity: 0; }
+}
+
+/* No `scroll-behavior: smooth` here: during streaming, content auto-follow uses
+   instant jumps to avoid the "catch-up" jank of long smooth animations.
+   User-initiated scroll-to-bottom passes `behavior: 'smooth'` from JS. */
+#messages {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: var(--ct-space-lg);
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-xs);
+}
+
+/* ============================================================
+   Messages
+   ============================================================ */
+
+.message {
+	padding: var(--ct-space-md) var(--ct-space-lg);
+	line-height: var(--ct-lh-normal);
+	word-wrap: break-word;
+	white-space: pre-wrap;
+	transition: background var(--ct-transition-fast), border-color var(--ct-transition-fast);
+}
+
+/* Message block container: text and activity blocks stack in a column with a gap.
+   Prevents adjacent text blocks from sticking together and gives spacing between
+   activity ↔ text. */
+.message-blocks {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-sm);
+}
+
+/* --- User --- */
+.message.user {
+	align-self: flex-end;
+  max-width: 60%;
+	background: var(--ct-bg-input);
+	color: var(--ct-text-primary);
+	border-radius: var(--ct-radius-lg) var(--ct-radius-lg) var(--ct-radius-xs) var(--ct-radius-lg);
+	border: 1px solid color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 50%, transparent);
+	box-shadow: var(--ct-shadow-subtle);
+	font-size: var(--ct-text-base);
+	line-height: var(--ct-lh-normal);
+	padding: var(--ct-space-sm) var(--ct-space-lg);
+	margin-top: var(--ct-space-md);
+	margin-bottom: var(--ct-space-md);
+}
+
+/* Queued user message (reject-with-response, waiting for agent turn to finish) */
+.message.user.queued {
+	opacity: 0.6;
+	border-style: dashed;
+}
+.queued-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-muted);
+	margin-top: var(--ct-space-xs);
+}
+.queued-spinner {
+	animation: ct-queued-spin 1.2s linear infinite;
+}
+@keyframes ct-queued-spin {
+	to { transform: rotate(360deg); }
+}
+
+/* --- Assistant --- */
+.message.assistant {
+	width: 100%;
+	color: var(--ct-text-primary);
+	background: transparent;
+	line-height: var(--ct-lh-relaxed);
+	white-space: normal;
+	padding: var(--ct-space-xs) var(--ct-space-lg);
+}
+
+/* --- Error --- */
+.message.error {
+	color: var(--ct-status-danger);
+	border-left: 2px solid var(--ct-status-danger);
+	padding-left: calc(var(--ct-space-lg) - var(--ct-space-sm) - 2px);
+	margin-left: var(--ct-space-sm);
+	margin-right: var(--ct-space-sm);
+	white-space: pre-wrap;
+	background: var(--ct-status-danger-bg);
+	border-radius: 0 var(--ct-radius-sm) var(--ct-radius-sm) 0;
+}
+
+/* ============================================================
+   Render-error fallback (ErrorBoundary)
+   ============================================================ */
+
+.render-error {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--ct-space-md);
+	padding: var(--ct-space-2xl);
+	text-align: center;
+	color: var(--ct-status-danger-text);
+	background: var(--ct-status-danger-bg);
+	border: 1px solid var(--ct-status-danger-border);
+	border-radius: var(--ct-radius-md);
+	margin: var(--ct-space-md) var(--ct-space-lg);
+}
+
+.render-error-text {
+	font-size: var(--ct-text-sm);
+	line-height: var(--ct-lh-normal);
+}
+
+.render-error-retry {
+	padding: var(--ct-space-xs) var(--ct-space-lg);
+	border-radius: var(--ct-radius-sm);
+	border: 1px solid var(--ct-status-danger-border);
+	background: var(--ct-bg-input);
+	color: var(--ct-text-primary);
+	font-size: var(--ct-text-sm);
+	cursor: pointer;
+	transition: background var(--ct-transition-fast), border-color var(--ct-transition-fast);
+}
+
+.render-error-retry:hover {
+	background: var(--ct-bg-hover);
+	border-color: var(--ct-border-focus);
+}

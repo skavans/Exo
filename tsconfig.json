@@ -1,0 +1,17 @@
+{
+	"compilerOptions": {
+		"module": "ES2022",
+		"moduleResolution": "bundler",
+		"target": "ES2022",
+		"outDir": "out",
+		"lib": [
+			"ES2022"
+		],
+		"sourceMap": true,
+		"rootDir": "src",
+		"strict": true,
+		"types": ["node"]
+	},
+	"include": ["src/**/*"],
+	"exclude": ["webview-ui/**/*"]
+}

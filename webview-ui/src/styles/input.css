@@ -1,0 +1,422 @@
+/* ============================================================
+   Input Area
+   ============================================================ */
+
+#input-area {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-sm);
+	padding: var(--ct-space-md) var(--ct-space-lg) var(--ct-space-lg);
+	border-top: 1px solid var(--ct-border-default);
+	background: var(--ct-bg-primary);
+	position: relative;
+}
+
+#input-area.drag-over {
+	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 8%, var(--ct-bg-primary));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 60%, transparent);
+}
+
+.drag-overlay {
+	position: absolute;
+	inset: 0;
+	z-index: 50;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+	background: color-mix(in srgb, var(--ct-bg-primary) 70%, transparent);
+	border: 1px dashed color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 70%, transparent);
+	border-radius: var(--ct-radius-md);
+}
+
+.drag-overlay-text {
+	font-size: var(--ct-text-sm);
+	font-weight: 600;
+	color: var(--ct-text-primary);
+}
+
+/* Transient notice (e.g. "N folders ignored") */
+.input-notice {
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-secondary);
+	font-style: italic;
+	padding: 0 var(--ct-space-sm);
+}
+
+/* ============================================================
+   File Chips (@-mention attached files)
+   ============================================================ */
+
+.file-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--ct-space-xs);
+	padding: 0;
+}
+
+/* ============================================================
+   Image Chips (paste/drop images)
+   ============================================================ */
+
+.image-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--ct-space-xs);
+	padding: 0;
+}
+
+.image-chip {
+	position: relative;
+	display: inline-flex;
+	width: 44px;
+	height: 44px;
+	border: 1px solid var(--ct-border-default);
+	border-radius: var(--ct-radius-sm);
+	overflow: hidden;
+	background: var(--ct-quote-bg);
+}
+
+.image-chip img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+
+.image-chip-remove {
+	position: absolute;
+	top: 0;
+	right: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: color-mix(in srgb, var(--ct-bg-primary) 85%, transparent);
+	color: var(--ct-icon);
+	border: none;
+	cursor: pointer;
+	padding: 0;
+	width: 16px;
+	height: 16px;
+	font-size: var(--ct-text-sm);
+	line-height: 1;
+	border-radius: 0 0 0 var(--ct-radius-xs);
+	transition: color var(--ct-transition-fast), background var(--ct-transition-fast);
+}
+
+.image-chip-remove:hover {
+	color: var(--ct-status-danger);
+	background: var(--ct-status-danger-bg);
+}
+
+.file-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+	background: var(--ct-quote-bg);
+	border: 1px solid var(--ct-border-default);
+	border-radius: var(--ct-radius-sm);
+	padding: var(--ct-space-2xs) var(--ct-space-xs) var(--ct-space-2xs) var(--ct-space-sm);
+	font-size: var(--ct-text-xs);
+	font-family: var(--ct-font-mono);
+	color: var(--ct-text-secondary);
+	line-height: var(--ct-lh-tight);
+	max-width: 200px;
+}
+
+.file-chip-icon {
+	font-size: var(--ct-text-xs);
+	flex-shrink: 0;
+	line-height: 1;
+	opacity: 0.6;
+}
+
+.file-chip-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.file-chip-remove {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: none;
+	border: none;
+	color: var(--ct-icon);
+	cursor: pointer;
+	padding: 0 2px;
+	font-size: var(--ct-text-base);
+	line-height: 1;
+	border-radius: var(--ct-radius-xs);
+	transition: color var(--ct-transition-fast), background var(--ct-transition-fast);
+	margin-left: var(--ct-space-2xs);
+}
+
+.file-chip-remove:hover {
+	color: var(--ct-status-danger);
+	background: var(--ct-status-danger-bg);
+}
+
+/* ============================================================
+   Message Attached Files (read-only chips in user messages)
+   ============================================================ */
+
+.message-attached-files {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--ct-space-xs);
+	margin-top: var(--ct-space-xs);
+}
+
+.file-chip-readonly {
+	opacity: 0.8;
+	cursor: default;
+}
+
+/* ============================================================
+   Message Attached Images (read-only chips in user messages)
+   ============================================================ */
+
+.message-attached-images {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--ct-space-xs);
+	margin-top: var(--ct-space-xs);
+}
+
+.image-chip-readonly {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+	background: var(--ct-quote-bg);
+	border: 1px solid var(--ct-border-default);
+	border-radius: var(--ct-radius-sm);
+	padding: var(--ct-space-2xs) var(--ct-space-sm);
+	font-size: var(--ct-text-xs);
+	font-family: var(--ct-font-mono);
+	color: var(--ct-text-secondary);
+	line-height: var(--ct-lh-tight);
+	max-width: 200px;
+	opacity: 0.8;
+	cursor: default;
+}
+
+.image-chip-icon {
+	font-size: var(--ct-text-xs);
+	flex-shrink: 0;
+	line-height: 1;
+	opacity: 0.6;
+}
+
+.image-chip-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ============================================================
+   Mention Dropdown (@-file search)
+   ============================================================ */
+
+.mention-dropdown {
+	position: absolute;
+	bottom: 100%;
+	left: 0;
+	right: 0;
+	margin-bottom: var(--ct-space-xs);
+	background: var(--ct-dropdown-bg);
+	border: 1px solid var(--ct-dropdown-border);
+	border-radius: var(--ct-radius-sm);
+	box-shadow: var(--ct-shadow-md);
+	z-index: 100;
+	max-height: 220px;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+}
+
+.mention-item {
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-sm);
+	background: none;
+	border: none;
+	color: var(--ct-dropdown-fg);
+	padding: var(--ct-space-xs) var(--ct-space-md);
+	cursor: pointer;
+	text-align: left;
+	width: 100%;
+	font-family: var(--ct-font-mono);
+	font-size: var(--ct-text-xs);
+	line-height: var(--ct-lh-normal);
+	transition: background var(--ct-transition-fast);
+}
+
+.mention-item:hover,
+.mention-item.selected {
+	background: var(--ct-bg-active);
+}
+
+.mention-item-icon {
+	font-size: var(--ct-text-sm);
+	flex-shrink: 0;
+	line-height: 1;
+	opacity: 0.6;
+	width: 14px;
+	text-align: center;
+}
+
+.mention-item-name {
+	font-weight: 500;
+	color: var(--ct-text-primary);
+	white-space: nowrap;
+}
+
+.mention-item-path {
+	color: var(--ct-text-secondary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: calc(var(--ct-text-xs) - 1px);
+	opacity: 0.7;
+}
+
+/* Fuzzy highlight: matched characters inside mention items */
+.mention-item .fuzzy-hit {
+	background: transparent;
+	color: var(--ct-text-primary);
+	font-weight: 700;
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, var(--ct-mode, var(--ct-border-focus)) 70%, transparent);
+	text-underline-offset: 2px;
+	text-decoration-thickness: 1px;
+}
+
+.mention-item.selected .fuzzy-hit {
+	color: var(--ct-dropdown-fg);
+}
+
+/* ============================================================
+   Textarea & Buttons
+   ============================================================ */
+
+.input-wrapper {
+	position: relative;
+	display: block;
+}
+
+#message-input {
+	width: 100%;
+	padding: var(--ct-space-sm) var(--ct-space-md);
+	padding-right: 36px;
+	border: 1px solid var(--ct-border-default);
+	background: var(--ct-bg-input);
+	color: var(--ct-text-primary);
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-base);
+	border-radius: var(--ct-radius-md);
+	outline: none;
+	resize: none;
+	min-height: 60px;
+	max-height: 150px;
+	transition: border-color var(--ct-transition-fast);
+	line-height: var(--ct-lh-normal);
+}
+
+/* Mode color on input border */
+#input-area.mode-active #message-input {
+	border-color: color-mix(in srgb, var(--ct-mode) 50%, transparent);
+}
+
+#input-area.mode-active #message-input:focus {
+	border-color: var(--ct-mode);
+}
+
+#message-input:focus {
+	border-color: var(--ct-border-focus);
+}
+
+#message-input::placeholder {
+	color: var(--ct-text-secondary);
+}
+
+/* Send button — positioned inside textarea */
+#send-btn {
+	position: absolute;
+	bottom: 8px;
+	right: 8px;
+	padding: 0;
+	background: none;
+	color: var(--ct-icon);
+	border: none;
+	border-radius: var(--ct-radius-sm);
+	cursor: pointer;
+	width: 24px;
+	height: 24px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: color var(--ct-transition-fast);
+}
+
+#send-btn:hover {
+	color: var(--ct-text-primary);
+}
+
+/* Stop button — replaces send button during agent loop */
+#stop-btn {
+	position: absolute;
+	bottom: 8px;
+	right: 8px;
+	padding: 0;
+	background: var(--ct-status-danger-bg);
+	color: var(--ct-status-danger-text);
+	border: 1px solid var(--ct-status-danger-border);
+	border-radius: var(--ct-radius-sm);
+	cursor: pointer;
+	width: 24px;
+	height: 24px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: background var(--ct-transition-fast), color var(--ct-transition-fast);
+}
+
+#stop-btn:hover {
+	background: color-mix(in srgb, var(--ct-status-danger) 18%, transparent);
+	border-color: color-mix(in srgb, var(--ct-status-danger) 35%, transparent);
+	color: var(--ct-status-danger-text);
+}
+
+/* Disabled state for textarea */
+#message-input:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+	background: var(--ct-bg-input);
+}
+
+/* Reject mode — red border on textarea when awaiting permission.
+   Specificity is raised above #input-area.mode-active (2 id + 2 class vs 2 id + 1 class)
+   so the danger color always wins over the mode color. */
+#input-area .input-wrapper.reject-mode #message-input {
+	border-color: var(--ct-status-danger);
+	background: color-mix(in srgb, var(--ct-status-danger) 6%, var(--ct-bg-input));
+}
+#input-area .input-wrapper.reject-mode #message-input:focus {
+	border-color: var(--ct-status-danger);
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--ct-status-danger) 30%, transparent);
+}
+#input-area .input-wrapper.reject-mode #message-input::placeholder {
+	color: color-mix(in srgb, var(--ct-status-danger) 70%, var(--ct-text-secondary));
+}
+
+/* Reject button — red send button */
+#send-btn.reject-btn {
+	color: var(--ct-status-danger);
+}
+#send-btn.reject-btn:hover {
+	color: var(--ct-status-danger-text);
+	background: color-mix(in srgb, var(--ct-status-danger) 15%, transparent);
+}
+

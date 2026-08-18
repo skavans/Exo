@@ -1,0 +1,162 @@
+/* ============================================================
+   Todo List (plan progress widget)
+   ============================================================ */
+
+.todo-list {
+	flex-shrink: 0;
+}
+
+.todo-list + #input-area {
+	border-top: none;
+}
+
+.todo-header {
+	display: flex;
+	flex-direction: column;
+	padding: var(--ct-space-sm) var(--ct-space-lg);
+	cursor: pointer;
+	user-select: none;
+}
+
+.todo-header:hover {
+	background: var(--ct-bg-hover);
+}
+
+.todo-header-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+.todo-header-left {
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+}
+
+.todo-title {
+	font-size: var(--ct-text-sm);
+	font-weight: 600;
+	color: var(--ct-text-primary);
+}
+
+.todo-progress {
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-secondary);
+	font-variant-numeric: tabular-nums;
+}
+
+.todo-progress-bar {
+	width: 100%;
+	height: 3px;
+	background: var(--ct-border-default);
+	overflow: hidden;
+}
+
+.todo-progress-fill {
+	height: 100%;
+	background: var(--ct-accent);
+	border-radius: var(--ct-radius-pill);
+	transition: width 400ms ease;
+}
+
+.todo-list.all-done .todo-progress-fill {
+	background: var(--ct-status-success);
+}
+
+.todo-steps {
+	padding: 0 var(--ct-space-lg) var(--ct-space-sm);
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-2xs);
+}
+
+.todo-step {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--ct-space-sm);
+	padding: var(--ct-space-2xs) var(--ct-space-md);
+	border-radius: var(--ct-radius-sm);
+	transition: background var(--ct-transition-fast);
+}
+
+.todo-step.in_progress {
+	background: var(--ct-status-info-bg);
+	border-left: 2px solid var(--ct-accent);
+	padding-left: calc(var(--ct-space-md) - 2px);
+}
+
+.todo-step-icon {
+	flex-shrink: 0;
+	width: 16px;
+	height: 16px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: var(--ct-radius-pill);
+	font-size: 8px;
+	font-weight: 700;
+	margin-top: 2px;
+}
+
+.todo-step-icon.done {
+	background: var(--ct-status-success-bg);
+	color: var(--ct-status-success);
+}
+
+.todo-step-icon.active {
+	background: var(--ct-status-info-bg);
+	color: transparent;
+	font-size: 0;
+}
+
+.todo-step-icon.active::after {
+	content: '';
+	width: 6px;
+	height: 6px;
+	border-radius: var(--ct-radius-pill);
+	background: var(--ct-accent);
+	animation: ct-todo-pulse 2s ease-in-out infinite;
+}
+
+@keyframes ct-todo-pulse {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50% { opacity: 0.4; transform: scale(0.6); }
+}
+
+.todo-step-icon.pending {
+	border: 1.5px solid var(--ct-icon);
+	color: transparent;
+	font-size: 0;
+}
+
+.todo-step-content {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-2xs);
+	min-width: 0;
+	flex: 1;
+}
+
+.todo-step-title {
+	font-size: var(--ct-text-sm);
+	color: var(--ct-text-primary);
+	line-height: var(--ct-text-lg);
+}
+
+.todo-step.done .todo-step-title {
+	color: var(--ct-text-secondary);
+	text-decoration: line-through;
+}
+
+.todo-step.in_progress .todo-step-title {
+	font-weight: 500;
+}
+
+.todo-step-desc {
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-secondary);
+	line-height: var(--ct-lh-normal);
+	white-space: pre-wrap;
+	word-wrap: break-word;
+}

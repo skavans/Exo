@@ -1,0 +1,121 @@
+/* ============================================================
+   Base Reset & Layout
+   ============================================================ */
+
+/* --- Reset --- */
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+body {
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-base);
+	color: var(--ct-text-primary);
+	background: var(--ct-bg-primary);
+	height: 100vh;
+	overflow: hidden;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.chat-view {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+/* ============================================================
+   Scrollbar (subtle, theme-aware, unified — applied globally
+   so every scrollable area inside the webview stays thin)
+   ============================================================ */
+
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--ct-scrollbar-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+	width: var(--ct-scrollbar-width);
+	height: var(--ct-scrollbar-width);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--ct-scrollbar-thumb);
+	border-radius: var(--ct-radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--ct-scrollbar-thumb-hover);
+}
+
+.scroll-to-bottom {
+	position: absolute;
+	bottom: var(--ct-space-xl);
+	right: var(--ct-space-xl);
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	border: none;
+	background: var(--ct-btn-secondary-bg);
+	color: var(--ct-btn-secondary-fg);
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-shadow: var(--ct-shadow-md);
+	transition: opacity var(--ct-transition-fast), background var(--ct-transition-fast);
+	z-index: 10;
+	opacity: 0.7;
+	padding: 0;
+}
+
+.scroll-to-bottom:hover {
+	opacity: 1;
+	background: var(--ct-accent);
+	color: var(--ct-accent-text);
+}
+
+/* ============================================================
+   Empty State
+   ============================================================ */
+
+.empty-state {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	color: var(--ct-text-secondary);
+	padding: var(--ct-space-3xl);
+	text-align: center;
+	gap: var(--ct-space-md);
+}
+
+.empty-state-icon {
+	font-size: 32px;
+	opacity: 0.4;
+	margin-bottom: var(--ct-space-sm);
+}
+
+.empty-state-text {
+	font-size: var(--ct-text-base);
+	line-height: var(--ct-lh-normal);
+}
+
+.empty-state-hint {
+	font-size: var(--ct-text-sm);
+	color: var(--ct-text-muted);
+}

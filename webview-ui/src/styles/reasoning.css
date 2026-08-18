@@ -1,0 +1,264 @@
+/* ============================================================
+   Activity Bar — the agent's unified activity bar
+   ============================================================ */
+
+.activity-bar {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-xs);
+	position: relative;
+	isolation: isolate;
+	margin-top: var(--ct-space-sm);
+	margin-bottom: var(--ct-space-sm);
+}
+
+/* --- Header (clickable row) --- */
+
+.activity-bar-header {
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-md);
+	cursor: pointer;
+	user-select: none;
+	padding: var(--ct-space-2xs) var(--ct-space-xs) var(--ct-space-2xs) 0;
+	border-radius: var(--ct-radius-sm);
+	transition: background var(--ct-transition-fast);
+	position: relative;
+}
+
+/* Hover highlights the header instead of dimming it. Chips get a slight contrast bump. */
+.activity-bar-header:hover {
+	background: transparent;
+}
+
+.activity-bar-header:hover::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: calc(-1 * var(--ct-space-xs));
+	background: var(--ct-bg-hover);
+	border-radius: var(--ct-radius-sm);
+	pointer-events: none;
+}
+
+.activity-bar-header:hover .activity-bar-reasoning-signal:not(.is-active),
+.activity-bar-header:hover .activity-bar-tool:not(.is-active) {
+	color: var(--ct-text-primary);
+}
+
+.activity-bar-header > * {
+	position: relative;
+	z-index: 1;
+}
+
+/* ── Base chip (capsule): reasoning-signal and tool-group ──
+   A single visual unit with a fixed height — removes
+   "dancing" icons and the dissonance between a bare outline icon
+   and a separate count badge. */
+.activity-bar-reasoning-signal,
+.activity-bar-tool {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ct-space-2xs);
+	height: 20px;
+	padding: 0 var(--ct-space-sm);
+	border-radius: var(--ct-radius-pill);
+	background: var(--ct-status-muted-bg);
+	font-family: var(--ct-font-mono);
+	font-size: var(--ct-text-xs);
+	font-weight: 500;
+	color: var(--ct-text-secondary);
+	line-height: 1;
+	transition: background var(--ct-transition-fast), color var(--ct-transition-fast);
+	position: relative;
+	overflow: hidden;
+}
+
+/* Is-active: the mode accent fills the whole chip (current work) — solid, no blinking */
+.activity-bar-reasoning-signal.is-active,
+.activity-bar-tool.is-active {
+	color: var(--ct-mode, var(--ct-accent));
+	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 14%, transparent);
+}
+
+/* brain/tool icons — FA glyphs. 13×13 wrapper, font-size 12px.
+   display:block on <i> drops the inline-baseline of the FA glyph, which used to
+   push the icon down → flex centering becomes pixel-accurate. */
+.activity-bar-brain,
+.activity-bar-tool-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 13px;
+	height: 13px;
+	color: inherit;
+	opacity: 0.4;
+	flex-shrink: 0;
+	transition: opacity var(--ct-transition-fast);
+}
+
+.activity-bar-reasoning-signal.is-active .activity-bar-brain,
+.activity-bar-tool.is-active .activity-bar-tool-icon {
+	opacity: 1;
+}
+
+.activity-bar-brain i,
+.activity-bar-tool-icon i {
+	display: block;
+	font-size: 12px;
+	line-height: 1;
+}
+
+/* Inner text elements — bare text, no own capsules
+   (background/padding/radius inherited from the chip) */
+.activity-bar-phases,
+.activity-bar-tokens,
+.activity-bar-tool-count {
+	color: inherit;
+	line-height: 1;
+	opacity: 0.6;
+	transition: opacity var(--ct-transition-fast);
+}
+
+.activity-bar-reasoning-signal.is-active .activity-bar-phases,
+.activity-bar-reasoning-signal.is-active .activity-bar-tokens,
+.activity-bar-tool.is-active .activity-bar-tool-count {
+	opacity: 1;
+}
+
+/* Tokens: inline-flex so ↓ (sep) and the number sit flush, with no gap.
+   Left padding — a visual pause before the "↓123" group after brain/phases. */
+.activity-bar-tokens {
+	display: inline-flex;
+	align-items: center;
+	margin-left: var(--ct-space-xs);
+}
+
+/* "Incoming tokens" arrow separator: pinned to the number, FA glyph.
+   Lower opacity — it's a separator, not an accent. */
+.activity-bar-tokens-sep {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	color: inherit;
+	opacity: 0.55;
+}
+
+.activity-bar-tokens-sep i {
+	font-size: 9px;
+	line-height: 1;
+}
+
+/* Shimmer — a sequential sweep across all chips ("scanner").
+   JS sets the progress --ct-shimmer-progress (0..N, N=chipCount) via rAF
+   on .activity-bar-center. Each chip subtracts its own --chip-index:
+   while (progress - index) < 0 — the strip sits past the left edge (clipped by overflow:hidden),
+   > 1 — past the right. The wave is visible only on the chip ≈ current index,
+   flowing across the gap onto the next one. left: 100% = chip width (parent). */
+.activity-bar.active .activity-bar-center > *::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: calc(-26px + (var(--ct-shimmer-progress, 0) - var(--chip-index, 0)) * (100% + 26px));
+	width: 26px;
+	pointer-events: none;
+	mix-blend-mode: screen;
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		var(--ct-shimmer-color) 50%,
+		transparent 100%
+	);
+}
+
+/* --- Center section: tool icons with counts --- */
+
+.activity-bar-center {
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-sm);
+	flex: 1;
+	min-width: 0;
+}
+
+/* --- Right section: timer + chevron --- */
+
+.activity-bar-right {
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+	flex-shrink: 0;
+}
+
+.activity-bar-timer {
+	font-size: var(--ct-text-sm);
+	color: var(--ct-text-secondary);
+	font-variant-numeric: tabular-nums;
+}
+
+.activity-bar-chevron {
+	display: inline-block;
+	width: 9px;
+	height: 9px;
+	border-right: 1.4px solid var(--ct-icon);
+	border-bottom: 1.4px solid var(--ct-icon);
+	transform: rotate(-45deg);
+	transition: transform var(--ct-transition-smooth);
+	flex-shrink: 0;
+	opacity: 0.7;
+}
+
+.activity-bar-chevron.expanded {
+	transform: rotate(45deg);
+}
+
+/* --- Expanded content --- */
+
+.activity-bar-content {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-sm);
+	animation: ct-slide-in var(--ct-transition-smooth);
+}
+
+/* Reasoning text inside expanded */
+.activity-bar-reasoning {
+	font-size: var(--ct-text-sm);
+	color: var(--ct-text-secondary);
+	line-height: var(--ct-lh-normal);
+	white-space: pre-wrap;
+	word-wrap: break-word;
+	max-height: 120px;
+	overflow-y: auto;
+	padding: var(--ct-space-xs) var(--ct-space-md);
+	background: transparent;
+	border-radius: 0;
+	border-left: 2px solid var(--ct-accent);
+}
+
+/* Tool lines inside expanded */
+.activity-bar-tools {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-2xs);
+	padding-left: var(--ct-space-xs);
+	border-left: 1px solid var(--ct-border-default);
+}
+
+@keyframes ct-slide-in {
+	from {
+		opacity: 0;
+		max-height: 0;
+	}
+	to {
+		opacity: 1;
+		max-height: 500px;
+	}
+}
+
+/* Accessibility: under prefers-reduced-motion JS does not start rAF, the variable
+   stays 0 → the strip sits off the left edge (invisible). The is-active accent
+   remains (it is static). */

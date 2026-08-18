@@ -1,0 +1,227 @@
+/* ============================================================
+   Tool Calls — remaining styles (compact, debug, status)
+   The icon bar moved to activity-bar (reasoning.css)
+   ============================================================ */
+
+/* --- Compact Tool Line (non-review) --- */
+
+.tool-compact {
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-secondary);
+	line-height: var(--ct-lh-normal);
+	padding: 0;
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+	cursor: pointer;
+	transition: color var(--ct-transition-fast);
+}
+
+.tool-compact:hover {
+	color: var(--ct-text-secondary);
+}
+
+.tool-compact-icon {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	color: var(--ct-icon);
+}
+
+.tool-compact-icon i {
+	font-size: 13px;
+	line-height: 1;
+}
+
+.tool-compact-summary {
+	font-family: var(--ct-font-mono);
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-secondary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.tool-compact-badge {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	margin-left: auto;
+}
+
+/* --- Status Icons (outline, theme-aware) --- */
+
+.status-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 14px;
+	height: 14px;
+	color: var(--ct-icon);
+}
+
+.status-icon.status-pending {
+	color: var(--ct-icon);
+	animation: ct-status-pulse 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.status-icon.status-error {
+	color: var(--ct-status-danger);
+}
+
+.status-icon.status-rejected {
+	color: var(--ct-status-danger);
+}
+
+.status-icon.status-cancelled {
+	color: var(--ct-icon);
+}
+
+@keyframes ct-status-pulse {
+	0%, 100% { opacity: 0.45; }
+	50% { opacity: 0.9; }
+}
+
+/* --- Tool Debug (click to expand args/result) --- */
+
+.tool-debug {
+	padding: var(--ct-space-xs) 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-xs);
+}
+
+.tool-debug-section {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.tool-debug-label {
+	font-size: var(--ct-text-xs);
+	font-weight: 600;
+	color: var(--ct-text-secondary);
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
+}
+
+.tool-debug-content {
+	font-family: var(--ct-font-mono);
+	font-size: var(--ct-text-xs);
+	line-height: var(--ct-lh-normal);
+	color: var(--ct-text-secondary);
+	background: var(--ct-surface-elevated);
+	border-radius: var(--ct-radius-sm);
+	padding: var(--ct-space-xs) var(--ct-space-sm);
+	max-height: 200px;
+	overflow-y: auto;
+	white-space: pre-wrap;
+	word-wrap: break-word;
+	margin: 0;
+}
+
+.tool-debug-content.tool-debug-error {
+	color: var(--ct-status-danger);
+	border-left: 2px solid var(--ct-status-danger);
+}
+
+/* --- Empty assistant (tool-only, no text) --- */
+
+.message.assistant:not(:has(> .md-content)) {
+	/* No content — minimal padding */
+}
+
+.message.assistant:not(:has(> .md-content)):not(:has(> .activity-bar)) {
+	padding-top: 0;
+	padding-bottom: 0;
+}
+
+.message.assistant:not(:has(> .md-content)):has(> .activity-bar) {
+	padding-top: 2px;
+	padding-bottom: 2px;
+}
+
+/* --- Permission Card (ACP session/request_permission) --- */
+
+.tool-perm-card {
+	border: 1px solid var(--ct-border-default);
+	border-radius: var(--ct-radius-md);
+	background: var(--ct-surface);
+	overflow: hidden;
+}
+
+.tool-perm-row {
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+	padding: var(--ct-space-2xs) var(--ct-space-sm);
+	cursor: pointer;
+	min-height: 28px;
+}
+
+.tool-perm-row:hover {
+	background: var(--ct-bg-hover);
+}
+
+.tool-perm-icon {
+	flex-shrink: 0;
+	color: var(--ct-text-secondary);
+	font-size: var(--ct-text-xs);
+}
+
+.tool-perm-label {
+	flex: 1;
+	font-family: var(--ct-font-mono);
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-primary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
+}
+
+.tool-perm-actions {
+	display: flex;
+	flex-shrink: 0;
+	gap: var(--ct-space-xs);
+}
+
+.tool-perm-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ct-space-2xs);
+	padding: 2px var(--ct-space-sm);
+	border-radius: var(--ct-radius-sm);
+	cursor: pointer;
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-xs);
+	font-weight: 500;
+	white-space: nowrap;
+	background: var(--ct-status-success-bg);
+	color: var(--ct-status-success-text);
+	border: 1px solid var(--ct-status-success-border);
+	transition: background var(--ct-transition-fast), border-color var(--ct-transition-fast);
+}
+
+.tool-perm-btn:hover {
+	background: color-mix(in srgb, var(--ct-status-success) 18%, transparent);
+	border-color: color-mix(in srgb, var(--ct-status-success) 35%, transparent);
+}
+
+.tool-perm-btn svg {
+	flex-shrink: 0;
+}
+
+.tool-perm-resolved {
+	flex-shrink: 0;
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-secondary);
+	font-style: italic;
+}
+
+.status-icon.status-awaiting_permission {
+	color: var(--ct-status-warning-text, var(--ct-text-muted));
+}

@@ -1,0 +1,379 @@
+/* ============================================================
+   Markdown Content (inside .assistant messages)
+   ============================================================ */
+
+.md-content {
+	font-size: var(--ct-text-base);
+	line-height: var(--ct-lh-prose);
+	color: var(--ct-text-primary);
+}
+
+/* Streaming cursor — blinking block at the end of streaming content */
+.streaming-cursor::after {
+	content: '▊';
+	color: var(--ct-text-secondary);
+	animation: ct-cursor-blink 1s step-end infinite;
+	margin-left: 1px;
+}
+
+@keyframes ct-cursor-blink {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0; }
+}
+
+.md-content > *:first-child {
+	margin-top: 0;
+}
+
+.md-content > *:last-child {
+	margin-bottom: 0;
+}
+
+
+
+/* Headings */
+.md-content h1,
+.md-content h2,
+.md-content h3,
+.md-content h4,
+.md-content h5,
+.md-content h6 {
+	margin-top: var(--ct-space-xl);
+	margin-bottom: var(--ct-space-md);
+	font-weight: 700;
+	line-height: var(--ct-lh-tight);
+	color: var(--ct-text-emphasis);
+}
+
+.md-content h1 {
+	font-size: calc(var(--ct-text-base) + 7px);
+	letter-spacing: -0.015em;
+	margin-top: var(--ct-space-3xl);
+}
+
+.md-content h2 {
+	font-size: calc(var(--ct-text-base) + 5px);
+	letter-spacing: -0.01em;
+	margin-top: var(--ct-space-3xl);
+	margin-bottom: var(--ct-space-sm);
+}
+
+.md-content h3 {
+	font-size: calc(var(--ct-text-base) + 3px);
+	margin-top: var(--ct-space-2xl);
+	margin-bottom: var(--ct-space-xs);
+}
+
+.md-content h4,
+.md-content h5,
+.md-content h6 {
+	font-size: var(--ct-text-base);
+	font-weight: 600;
+}
+/* Paragraphs */
+.md-content p {
+	margin: 0 0 var(--ct-space-2xl);
+}
+
+/* Links */
+.md-content a {
+	color: var(--ct-link);
+	text-decoration: none;
+	transition: color var(--ct-transition-fast);
+}
+
+.md-content a:hover {
+	text-decoration: underline;
+	color: var(--ct-link-active);
+}
+
+/* Inline code — preformat pair on a crisp pill background. Foreground and
+   background both come from VS Code's preformat tokens; the pill reads as a
+   solid chip, not a translucent slab. */
+.md-content code {
+	font-family: var(--ct-font-mono);
+	font-size: 0.9em;
+	color: var(--ct-code-text);
+	background: var(--ct-code-inline-bg);
+	padding: 1px var(--ct-space-sm);
+	border-radius: var(--ct-radius-sm);
+}
+
+/* Code blocks — Shiki sets inline background-color/color on <pre> to match
+   the active theme (same as the editor). Border/radius are ours; top padding
+   is handled by the bar above the code. */
+.md-content pre {
+	margin: 0 0 var(--ct-space-xl);
+	padding: var(--ct-space-sm) var(--ct-space-md) var(--ct-space-md);
+	border-radius: 0 0 var(--ct-radius-md) var(--ct-radius-md);
+	overflow-x: auto;
+	border: 1px solid var(--ct-border-default);
+	border-top: none;
+	box-shadow: var(--ct-shadow-sm);
+}
+
+/* Plaintext fallback (unknown language) — Shiki is bypassed and no inline
+   background is set, so use the editor background token. */
+.md-content pre:not(.shiki) {
+	background: var(--ct-code-bg);
+}
+
+/* Wrapper around <pre> providing a header bar + code. */
+.code-block {
+	position: relative;
+	border-radius: var(--ct-radius-md);
+}
+
+/* Header bar — lang badge (left) + copy button (right) above the code. */
+.code-block-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: var(--ct-space-2xs) var(--ct-space-sm);
+	background: color-mix(in srgb, var(--ct-code-bg) 75%, var(--ct-bg-primary));
+	border: 1px solid var(--ct-border-default);
+	border-bottom: none;
+	border-radius: var(--ct-radius-md) var(--ct-radius-md) 0 0;
+}
+
+/* Language badge — subdued uppercase label. */
+.code-lang {
+	font-size: var(--ct-text-xs);
+	font-family: var(--ct-font-sans);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	color: var(--ct-text-muted);
+	user-select: none;
+}
+
+.code-lang:empty {
+	display: none;
+}
+
+/* Copy button — icon-only (fa-copy → fa-check on success). */
+.copy-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-secondary);
+	background: transparent;
+	border: none;
+	border-radius: var(--ct-radius-xs);
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity var(--ct-transition-fast), color var(--ct-transition-fast), background var(--ct-transition-fast);
+}
+
+.code-block:hover .copy-btn {
+	opacity: 1;
+}
+
+.copy-btn:hover {
+	color: var(--ct-text-primary);
+	background: var(--ct-bg-hover);
+}
+
+.copy-btn.copied {
+	color: var(--ct-status-success);
+	opacity: 1;
+}
+
+/* Code block scrollbar — uses the global thin scrollbar from base.css */
+
+.md-content pre code {
+	background: none;
+	padding: 0;
+	font-size: var(--ct-text-xs);
+	line-height: 1.4;
+	border-radius: 0;
+	border: none;
+}
+
+/* Blockquotes */
+.md-content blockquote {
+	margin: 0 0 var(--ct-space-xl);
+	padding: var(--ct-space-sm) var(--ct-space-lg);
+	border-left: 3px solid var(--ct-quote-border);
+	background: var(--ct-quote-bg);
+	border-radius: 0 var(--ct-radius-sm) var(--ct-radius-sm) 0;
+	color: var(--ct-text-secondary);
+}
+
+.md-content blockquote p {
+	margin: 0 0 var(--ct-space-xs);
+}
+
+.md-content blockquote p:last-child {
+	margin-bottom: 0;
+}
+
+/* Lists */
+.md-content ul,
+.md-content ol {
+	margin: 0 0 var(--ct-space-md);
+	padding-left: var(--ct-space-3xl);
+}
+
+/* A list right after another block continues it — tighten the gap so it doesn't
+   create a mega-hole between prose and its bullet items.
+   Adjacent margins collapse to max(), so we must zero the preceding block's
+   margin-bottom too (via :has), not just raise the list's margin-top. */
+.md-content p:has(+ ul),
+.md-content p:has(+ ol),
+.md-content blockquote:has(+ ul),
+.md-content blockquote:has(+ ol),
+.md-content pre:has(+ ul),
+.md-content pre:has(+ ol),
+.md-content table:has(+ ul),
+.md-content table:has(+ ol) {
+	margin-bottom: 0;
+}
+
+.md-content p + ul,
+.md-content p + ol,
+.md-content blockquote + ul,
+.md-content blockquote + ol,
+.md-content pre + ul,
+.md-content pre + ol,
+.md-content table + ul,
+.md-content table + ol {
+	margin-top: var(--ct-space-xs);
+}
+
+.md-content li {
+	margin: 0 0 var(--ct-space-md);
+	line-height: var(--ct-lh-prose);
+}
+
+/* Markers/numerals — dimmed so they don't compete with list-item text. */
+.md-content li::marker {
+	color: var(--ct-text-muted);
+}
+
+.md-content li:last-child {
+	margin-bottom: 0;
+}
+
+.md-content li > ul,
+.md-content li > ol {
+	margin: var(--ct-space-2xs) 0 0;
+}
+
+/* Task lists */
+.md-content ul li input[type="checkbox"] {
+	margin-right: var(--ct-space-xs);
+	transform: translateY(-1px);
+}
+
+/* Tables — elegant, minimal */
+.md-content table {
+	width: 100%;
+	margin: 0 0 var(--ct-space-xl);
+	border-collapse: collapse;
+	font-size: var(--ct-text-sm);
+	border: 1px solid var(--ct-border-strong);
+	border-radius: var(--ct-radius-sm);
+	overflow: hidden;
+}
+
+.md-content th,
+.md-content td {
+	padding: var(--ct-space-xs) var(--ct-space-md);
+	border: none;
+	text-align: left;
+}
+
+/* Zebra striping — soft alternating rows instead of hard border lines
+   ("comb" effect). Built from --ct-text-primary (an opaque foreground-derived
+   token) at low alpha so the band reads on any theme background; using a
+   translucent hover token here would compound alphas and vanish in dark themes. */
+.md-content tbody tr:nth-child(even) td {
+	background: color-mix(in srgb, var(--ct-text-primary) 6%, transparent);
+}
+
+.md-content th {
+	background: var(--ct-bg-hover);
+	font-weight: 650;
+	color: var(--ct-text-primary);
+	font-size: var(--ct-text-sm);
+	text-transform: none;
+	letter-spacing: 0.02em;
+	border-bottom: 1px solid var(--ct-border-strong);
+}
+
+/* Horizontal rule */
+.md-content hr {
+	margin: 0 0 var(--ct-space-xl);
+	border: none;
+	border-top: 1px solid var(--ct-border-strong);
+}
+
+/* Strong / em */
+.md-content strong {
+	font-weight: 700;
+	color: var(--ct-text-emphasis);
+}
+
+.md-content em {
+	font-style: italic;
+}
+
+.md-content kbd {
+	font-family: var(--ct-font-mono);
+	font-size: calc(var(--ct-text-sm) - 1px);
+	background-color: color-mix(in srgb, var(--ct-text-primary) 6%, transparent);
+	border: 1px solid color-mix(in srgb, var(--ct-text-primary) 15%, transparent);
+	border-radius: var(--ct-radius-xs);
+	padding: 1px 4px;
+	box-shadow: 0 1px 0 color-mix(in srgb, var(--ct-text-primary) 10%, transparent);
+	line-height: 1;
+}
+
+/* Images */
+.md-content img {
+	display: block;
+	max-width: 100%;
+	margin: var(--ct-space-md) auto;
+	border-radius: var(--ct-radius-md);
+}
+
+/* File links — clickable paths in assistant content.
+   Rendered as subtle inline pills (same visual language as .md-content code)
+   so icon + filename read as a single cohesive unit, not loose tokens.
+   Link-colored to distinguish from inert code spans. */
+.file-link {
+	font-family: var(--ct-font-mono);
+	font-size: 0.9em;
+	color: var(--ct-link);
+	text-decoration: none;
+	cursor: pointer;
+	background: color-mix(in srgb, var(--ct-link) 6%, transparent);
+	border: 1px solid color-mix(in srgb, var(--ct-link) 30%, transparent);
+	padding: 1px var(--ct-space-sm);
+	border-radius: var(--ct-radius-sm);
+	white-space: nowrap;
+	transition: background var(--ct-transition-fast), border-color var(--ct-transition-fast);
+}
+
+.file-link .fas {
+	display: inline;
+	font-size: 0.85em;
+	opacity: 0.7;
+	margin-right: 0.3em;
+	vertical-align: baseline;
+}
+
+.file-link:hover {
+	background: color-mix(in srgb, var(--ct-link) 12%, transparent);
+	border-color: color-mix(in srgb, var(--ct-link) 50%, transparent);
+	text-decoration: none;
+}
+
+/* In headings — shrink further so the pill doesn't dominate the title */
+.md-content :is(h1, h2, h3, h4, h5, h6) .file-link {
+	font-size: 0.75em;
+}

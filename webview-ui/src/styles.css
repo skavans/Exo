@@ -1,0 +1,15 @@
+/* Exo — Style Index */
+@import '@fortawesome/fontawesome-free/css/solid.min.css';
+@import '@fortawesome/fontawesome-free/css/fontawesome.min.css';
+@import './styles/tokens.css';
+@import './styles/base.css';
+@import './styles/messages.css';
+@import './styles/markdown.css';
+@import './styles/reasoning.css';
+@import './styles/tool-calls.css';
+@import './styles/input.css';
+@import './styles/controls.css';
+@import './styles/plan.css';
+@import './styles/session-list.css';
+@import './styles/header.css';
+@import 'katex/dist/katex.min.css';

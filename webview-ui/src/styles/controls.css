@@ -1,0 +1,263 @@
+/* ============================================================
+   Config Selectors (mode / model / thought_level dropdowns)
+   ============================================================ */
+
+#controls-row {
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-sm);
+	flex-wrap: wrap;
+}
+
+.auto-allow-lock {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	height: calc(var(--ct-text-xs) * var(--ct-lh-tight) + var(--ct-space-2xs) * 2 + 2px);
+	padding: 0 var(--ct-space-xs);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: var(--ct-radius-sm);
+	cursor: pointer;
+	transition: background var(--ct-transition-fast), border-color var(--ct-transition-fast), color var(--ct-transition-fast);
+	flex-shrink: 0;
+	margin-right: calc(var(--ct-space-xs) * -0.15);
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-xs);
+	font-weight: 600;
+	line-height: var(--ct-lh-tight);
+}
+
+.auto-allow-lock:hover {
+	background: var(--ct-bg-hover);
+	border-color: var(--ct-border-default);
+}
+
+.auto-allow-lock.locked {
+	color: var(--ct-status-success-text);
+}
+
+.auto-allow-lock.locked:hover {
+	border-color: var(--ct-status-success-border);
+	background: var(--ct-status-success-bg);
+}
+
+.auto-allow-lock.unlocked {
+	color: var(--ct-status-danger-text);
+}
+
+.auto-allow-lock.unlocked:hover {
+	border-color: var(--ct-status-danger-border);
+	background: var(--ct-status-danger-bg);
+}
+
+.auto-allow-lock-label {
+	text-transform: lowercase;
+	letter-spacing: 0.01em;
+	white-space: nowrap;
+	opacity: 0.72;
+}
+
+.controls-spacer {
+	flex: 1;
+	min-width: var(--ct-space-sm);
+}
+
+.config-selector {
+	position: relative;
+	flex-shrink: 0;
+}
+
+.config-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+	padding: var(--ct-space-2xs) var(--ct-space-sm);
+	background: var(--ct-bg-input);
+	border: 1px solid var(--ct-border-default);
+	border-radius: var(--ct-radius-sm);
+	color: var(--ct-text-secondary);
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-xs);
+	font-weight: 500;
+	cursor: pointer;
+	line-height: var(--ct-lh-tight);
+	white-space: nowrap;
+	transition: border-color var(--ct-transition-fast), background var(--ct-transition-fast);
+	max-width: 160px;
+}
+
+.config-trigger:hover {
+	background: var(--ct-bg-hover);
+	border-color: var(--ct-border-focus);
+}
+
+.config-trigger:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+/* Mode variant — colored text + dot */
+.variant-mode .config-trigger {
+	font-weight: 600;
+	border-color: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 35%, transparent);
+	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 6%, var(--ct-bg-input));
+	padding-left: var(--ct-space-xs);
+}
+
+.variant-mode .config-trigger:hover {
+	border-color: var(--ct-mode, var(--ct-accent));
+	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 10%, var(--ct-bg-input));
+}
+
+.variant-mode .config-trigger:disabled {
+	opacity: 0.4;
+	border-color: var(--ct-border-default);
+	background: var(--ct-bg-input);
+}
+
+/* Model variant — wider to fit model names */
+.variant-model .config-trigger {
+	max-width: 260px;
+}
+
+/* Plain variant (thought_level) */
+.variant-plain .config-trigger {
+	color: var(--ct-text-secondary);
+	font-weight: 400;
+	max-width: 180px;
+}
+
+.variant-plain .config-trigger:hover {
+	color: var(--ct-text-primary);
+}
+
+/* Model trigger provider prefix */
+.config-trigger-provider {
+	color: var(--ct-text-secondary);
+	font-weight: 400;
+	flex-shrink: 0;
+}
+
+/* Mode color dot */
+.config-mode-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	display: inline-block;
+}
+
+/* Trigger label text */
+.config-trigger-label {
+	min-width: 0;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* Caret chevron */
+.config-caret {
+	flex-shrink: 0;
+	opacity: 0.6;
+	margin-left: var(--ct-space-2xs);
+}
+
+/* ============================================================
+   Dropdown Picker Panel
+   ============================================================ */
+
+.config-picker {
+	position: absolute;
+	bottom: calc(100% + var(--ct-space-xs));
+	left: 0;
+	background: var(--ct-dropdown-bg);
+	border: 1px solid var(--ct-dropdown-border);
+	border-radius: var(--ct-radius-sm);
+	box-shadow: var(--ct-shadow-md);
+	z-index: 100;
+	min-width: max(160px, 100%);
+	max-height: 260px;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	padding: var(--ct-space-2xs) 0;
+}
+
+.config-picker-title {
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	padding: var(--ct-space-xs) var(--ct-space-md) var(--ct-space-2xs);
+	pointer-events: none;
+	user-select: none;
+	opacity: 0.6;
+}
+
+.config-picker-item {
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-sm);
+	width: 100%;
+	background: none;
+	border: none;
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-xs);
+	color: var(--ct-dropdown-fg);
+	padding: var(--ct-space-xs) var(--ct-space-md);
+	cursor: pointer;
+	text-align: left;
+	white-space: nowrap;
+	transition: background var(--ct-transition-fast);
+	line-height: var(--ct-lh-normal);
+}
+
+.config-picker-item:hover {
+	background: var(--ct-bg-hover);
+}
+
+.config-picker-item.current {
+	color: var(--ct-text-primary);
+	font-weight: 600;
+}
+
+/* Dot in picker item (mode variant) */
+.config-picker-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	display: inline-block;
+}
+
+.config-picker-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* Group header for model picker */
+.config-picker-group {
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	padding: var(--ct-space-xs) var(--ct-space-md) var(--ct-space-2xs);
+	pointer-events: none;
+	user-select: none;
+	font-weight: 600;
+	line-height: var(--ct-lh-tight);
+}
+
+/* Checkmark for current item */
+.config-check {
+	flex-shrink: 0;
+	color: var(--ct-accent);
+	opacity: 0.8;
+}

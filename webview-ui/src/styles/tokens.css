@@ -1,0 +1,152 @@
+/* ============================================================
+   Exo Design System — Tokens
+   ============================================================ */
+
+/* --- Design Tokens --- */
+:root {
+	/* Spacing */
+	--ct-space-2xs: 2px;
+	--ct-space-xs: 4px;
+	--ct-space-sm: 6px;
+	--ct-space-md: 8px;
+	--ct-space-lg: 12px;
+	--ct-space-xl: 16px;
+	--ct-space-2xl: 20px;
+	--ct-space-3xl: 24px;
+
+	/* Typography */
+	--ct-text-xs: calc(var(--vscode-font-size) - 2px);
+	--ct-text-sm: calc(var(--vscode-font-size) - 1px);
+	--ct-text-base: var(--vscode-font-size);
+	--ct-text-lg: calc(var(--vscode-font-size) + 1px);
+
+	/* Line height */
+	--ct-lh-tight: 1.3;
+	--ct-lh-normal: 1.5;
+	--ct-lh-prose: 1.55;
+	--ct-lh-relaxed: 1.65;
+
+	/* Border radius */
+	--ct-radius-xs: 3px;
+	--ct-radius-sm: 5px;
+	--ct-radius-md: 8px;
+	--ct-radius-lg: 12px;
+	--ct-radius-pill: 9999px;
+
+	/* Colors — semantic aliases over VS Code variables */
+	/* Primary text (UI chrome + markdown prose) — the editor's readable foreground,
+	   which soft themes keep as a calm mid-tone instead of the burning #fff of
+	   --vscode-foreground. We render the main readable content of the panel, so we
+	   borrow the editor's text color rather than the dimmer sideBar tree-view color.
+	   The panel stays anchored as a sidebar via --ct-bg-primary (sideBar-background). */
+	--ct-text-primary: color-mix(in srgb, var(--vscode-foreground, #cccccc), var(--vscode-sideBar-foreground, #aaaaaa));
+	/* Emphasis text (headings, <strong>) — the bright component of the primary
+	   mix, used to lift structural/emphasized prose above body text without
+	   dimming the body itself. Falls back to primary when foreground is absent. */
+	--ct-text-emphasis: var(--vscode-foreground, var(--ct-text-primary));
+	--ct-text-secondary: var(--vscode-descriptionForeground);
+	--ct-text-muted: var(--vscode-disabledForeground);
+	/* Icons (chevrons, glyphs, decorative marks) — the workbench's icon color,
+	   slightly dimmed so decorative marks stay legible without competing with
+	   primary content. */
+	--ct-icon: color-mix(in srgb, var(--vscode-icon-foreground, var(--ct-text-secondary)) 78%, transparent);
+	--ct-bg-primary: var(--vscode-sideBar-background);
+	--ct-bg-input: var(--vscode-input-background);
+	--ct-bg-hover: var(--vscode-list-hoverBackground);
+	--ct-bg-active: var(--vscode-list-activeSelectionBackground);
+	--ct-border-default: var(--vscode-widget-border, var(--vscode-editorWidget-border, color-mix(in srgb, var(--ct-text-primary) 12%, transparent)));
+	--ct-border-subtle: color-mix(in srgb, var(--ct-border-default) 60%, transparent);
+	--ct-border-strong: color-mix(in srgb, var(--ct-text-primary) 20%, transparent);
+	--ct-border-focus: var(--vscode-focusBorder);
+	--ct-accent: var(--vscode-button-background);
+	--ct-accent-text: var(--vscode-button-foreground);
+	--ct-link: var(--vscode-textLink-foreground, var(--ct-accent));
+	--ct-link-active: var(--vscode-textLink-activeForeground, var(--ct-link));
+	--ct-code-bg: var(--vscode-textCodeBlock-background, var(--vscode-editor-background));
+	/* Preformatted text (inline code + code blocks) — distinct from prose so
+	   monospaced snippets read as code, not as body text. */
+	--ct-code-text: var(--ct-text-primary);
+	--ct-code-inline-bg: color-mix(in srgb, var(--vscode-list-inactiveSelectionBackground, var(--vscode-list-activeSelectionBackground, var(--vscode-list-hoverBackground, var(--ct-bg-hover)))) 100%, var(--ct-bg-primary));
+	--ct-quote-bg: var(--vscode-textBlockQuote-background, var(--vscode-editor-inactiveSelectionBackground));
+	--ct-quote-border: var(--vscode-textBlockQuote-border, var(--vscode-descriptionForeground));
+	/* Surfaces */
+	--ct-surface: var(--ct-bg-primary);
+	--ct-surface-elevated: var(--vscode-sideBarSectionHeader-background, var(--ct-bg-hover));
+
+	/* Dropdowns (mention picker, config selector) */
+	--ct-dropdown-bg: var(--vscode-dropdown-background, var(--ct-surface-elevated));
+	--ct-dropdown-border: var(--vscode-dropdown-border, var(--ct-border-default));
+	--ct-dropdown-fg: var(--vscode-dropdown-foreground, var(--ct-text-primary));
+
+	/* Secondary button (scroll-to-bottom) */
+	--ct-btn-secondary-bg: var(--vscode-button-secondaryBackground, color-mix(in srgb, var(--ct-text-primary) 12%, transparent));
+	--ct-btn-secondary-fg: var(--vscode-button-secondaryForeground, var(--ct-text-primary));
+
+	/* Status palette — semantic, themeable via color-mix */
+	--ct-status-success: var(--vscode-terminal-ansiGreen, #4ec9b0);
+	--ct-status-success-bg: color-mix(in srgb, var(--ct-status-success) 10%, transparent);
+	--ct-status-success-border: color-mix(in srgb, var(--ct-status-success) 25%, transparent);
+	--ct-status-success-text: var(--ct-status-success);
+
+	--ct-status-danger: var(--vscode-errorForeground, #f85149);
+	--ct-status-danger-bg: color-mix(in srgb, var(--ct-status-danger) 10%, transparent);
+	--ct-status-danger-border: color-mix(in srgb, var(--ct-status-danger) 25%, transparent);
+	--ct-status-danger-text: var(--ct-status-danger);
+
+	--ct-status-warning: var(--vscode-editorWarning-foreground, #cca700);
+	--ct-status-warning-text: var(--ct-status-warning);
+
+	--ct-status-info: var(--vscode-editorInfo-foreground, var(--vscode-textLink-foreground, #4ea1f0));
+	--ct-status-info-bg: color-mix(in srgb, var(--ct-status-info) 10%, transparent);
+
+	--ct-status-muted-bg: color-mix(in srgb, var(--ct-text-muted) 10%, transparent);
+
+	/* Shimmer — theme-aware sweep highlight over chips.
+	   Dark: white veil; Light: dark veil (screen blend was invisible on light). */
+	--ct-shimmer-color: rgba(255, 255, 255, 0.14);
+
+	/* Edge shadow — subtle inner shadow at the top/bottom edge of #messages,
+	   hints at scroll boundaries. Dark theme: black, soft. */
+		--ct-edge-shadow: rgba(0, 0, 0, 0.15);
+
+	/* Font families */
+	--ct-font-sans: var(--vscode-font-family);
+	--ct-font-mono: var(--vscode-editor-font-family, var(--vscode-font-family));
+
+	/* Shadows — driven by the workbench's widget-shadow token so they follow
+	   the theme (dark themes cast darker, light themes softer). */
+	--ct-shadow-base: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.12));
+	--ct-shadow-sm: 0 1px 2px var(--ct-shadow-base);
+	--ct-shadow-md: 0 2px 8px var(--ct-shadow-base);
+	--ct-shadow-subtle: 0 1px 3px var(--ct-shadow-base), 0 0 0 1px color-mix(in srgb, var(--ct-text-muted) 8%, transparent);
+
+	/* Transitions */
+	--ct-transition-fast: 120ms ease;
+	--ct-transition-smooth: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+	/* Scrollbar */
+	--ct-scrollbar-width: 5px;
+	--ct-scrollbar-thumb: var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.25));
+	--ct-scrollbar-thumb-hover: var(--vscode-scrollbarSlider-hoverBackground, rgba(128, 128, 128, 0.45));
+}
+
+body[data-vscode-theme-kind="vscode-light"],
+body[data-vscode-theme-kind="vscode-high-contrast-light"] {
+	--ct-shimmer-color: rgba(0, 0, 0, 0.08);
+	/* Light theme: softer, otherwise it hurts the eye. */
+		--ct-edge-shadow: rgba(0, 0, 0, 0.09);
+}
+
+body[data-vscode-theme-kind="vscode-high-contrast"],
+body[data-vscode-theme-kind="vscode-high-contrast-light"] {
+/* High Contrast: remove shadows (they mask boundaries), opaque borders
+   via contrastBorder, strengthened icons without dimming. */
+	--ct-shadow-sm: none;
+	--ct-shadow-md: none;
+	--ct-shadow-subtle: 0 0 0 1px var(--vscode-contrastBorder);
+	--ct-edge-shadow: transparent;
+	--ct-border-default: var(--vscode-contrastBorder, var(--vscode-contrastActiveBorder));
+	--ct-border-subtle: var(--ct-border-default);
+	--ct-border-strong: var(--ct-border-default);
+	--ct-icon: var(--vscode-icon-foreground, var(--ct-text-primary));
+}
