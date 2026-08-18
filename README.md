@@ -4,10 +4,11 @@
   <img src="media/screenshot.png" alt="Exo — AI coding assistant in the VS Code sidebar" width="560"/>
 </p>
 
-A **self-hosted AI coding assistant** that lives in your VS Code sidebar. Exo
+A local AI coding assistant interface that lives in your VS Code sidebar. Exo
 connects to any [ACP](https://agentclientprotocol.com/get-started/introduction)-compatible
-agent — [opencode](https://github.com/anomalyco/opencode), Claude Code, Aider,
-or your own — and gives you a clean, native interface for the conversation.
+agent — [opencode](https://github.com/anomalyco/opencode) works out of the box,
+others are on the roadmap — and gives you a clean, native interface for the
+conversation.
 
 Exo is not an agent. It is a **client**: it spawns your agent as a child process
 (via stdio/ACP), renders the conversation in the sidebar, and handles the
@@ -31,7 +32,7 @@ workspace, not in an isolated terminal box.
 
 I used to love Cline and KiloCode — until one was abandoned and the other was
 ported to a new engine that turned it into something genuinely unpleasant to use.
-Building a fully self-hosted agent is a much bigger project (I did try), so I went
+Building an agent from scratch is a much bigger project (I did try), so I went
 the other way: a **pure ACP client**. That turned out great, and this is the
 result.
 
