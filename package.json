@@ -72,7 +72,8 @@
     "vscode:prepublish": "npm run compile -- --production",
     "compile": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
-    "install-local": "npm version patch --no-git-tag-version && npm run compile -- --production && rm -f exo-*.vsix && npx vsce package && (codium-insiders --install-extension exo-*.vsix || codium --install-extension exo-*.vsix || code --install-extension exo-*.vsix)",
+    "release": "bash scripts/release.sh",
+    "install-local": "npm run compile -- --production && rm -f exo-*.vsix && npx vsce package && (codium-insiders --install-extension exo-*.vsix || codium --install-extension exo-*.vsix || code --install-extension exo-*.vsix)",
     "lint": "eslint src"
   },
   "devDependencies": {

@@ -68,7 +68,8 @@ Then launch the extension host with F5 (`vscode:prepublish` runs automatically),
 or build a `.vsix` and install it:
 
 ```sh
-npm run install-local   # bumps patch version, packages and installs the .vsix
+npm run install-local   # packages and installs the .vsix (no version bump)
+npm run release -- patch # bump version, commit+tag, push + GitHub Release with auto-notes
 ```
 
 Configure at least one ACP agent in `~/.config/exo/config.yml`

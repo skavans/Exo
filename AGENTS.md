@@ -194,6 +194,7 @@ Exo is a VS Code extension that provides an interface to an autonomous AI agent 
     - `npm run compile` — one-shot esbuild of extension (`out/extension.js`, CJS) + webview (`out/webview.js`/`out/webview.css`, ESM).
     - `npm run watch` — esbuild watch mode.
     - `npm run lint` — ESLint over `src/` only (webview not linted). Config is warning-heavy (`curly`, `eqeqeq`); new code should avoid triggering.
-    - `npm run install-local` — bumps patch version, builds production, packages `.vsix`, installs into VS Code.
+    - `npm run install-local` — builds production, packages `.vsix`, installs into VS Code (no version bump).
+    - `npm run release -- [patch|minor|major]` — bumps version (default `patch`), builds production, packages `.vsix`, commits `release: vX.Y.Z`, tags `vX.Y.Z`, pushes commit+tag to `origin` and `github` remotes, creates GitHub Release with auto-generated notes and attached artifact (requires `gh` CLI authenticated). Artifact is `exo-<версия>.vsix`.
 
 <!-- This section is intentionally minimal during initialization. Populate through real project work. -->

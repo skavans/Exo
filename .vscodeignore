@@ -19,6 +19,9 @@ tsconfig.json
 tsconfig.webview.json
 eslint.config.mjs
 
+# --- Release tooling ---
+scripts/**
+
 # --- AI / dev memory ---
 AGENTS.md
 
