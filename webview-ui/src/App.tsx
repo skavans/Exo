@@ -5,8 +5,7 @@ import { vscode } from './vscode';
 import { MessageList } from './components/MessageList';
 import { MessageInput } from './components/MessageInput';
 import { TodoList } from './components/TodoList';
-import { TabBar } from './components/TabBar';
-import { SessionPicker } from './components/SessionPicker';
+import { SessionHeader } from './components/SessionHeader';
 import { ConfigRequired } from './components/ConfigRequired';
 import { resolveThemeId, setTheme, getThemeVersion, type ThemeKind } from './shiki';
 
@@ -104,6 +103,14 @@ export function App() {
 		if (sessionId !== activeSessionIdRef.current) {
 			vscode.postMessage({ type: 'switchSession', sessionId });
 		}
+	}, []);
+
+	const handleToggleMenu = useCallback(() => {
+		setMenuOpen((v) => !v);
+	}, []);
+
+	const handleCloseMenu = useCallback(() => {
+		setMenuOpen(false);
 	}, []);
 
 	const handleDeleteRecent = useCallback((sessionId: string) => {
@@ -295,13 +302,20 @@ export function App() {
 
 	return (
 		<div class="chat-view" style={chatViewStyle}>
-			<div class="chat-header tab-mode">
-				<TabBar
+			<div class="chat-header">
+				<SessionHeader
 					tabs={tabs}
 					activeSessionId={activeSessionId}
 					agentLabel={agentLabel || undefined}
+					recentSessions={recentSessions}
+					open={menuOpen}
+					onToggle={handleToggleMenu}
+					onDismiss={handleCloseMenu}
 					onSelect={handleSelectTab}
 					onClose={handleCloseTab}
+					onNew={handleNew}
+					onOpen={handleOpenRecent}
+					onDelete={handleDeleteRecent}
 				/>
 				{tokenUsage && (
 					<div
@@ -341,16 +355,6 @@ export function App() {
 					<div class="empty-state-hint">Click + to start a new chat</div>
 					<button class="empty-new-btn" onClick={handleNew}>New session</button>
 				</div>
-			)}
-			{menuOpen && (
-				<SessionPicker
-					sessions={recentSessions}
-					agentInfo={agentInfo}
-					onNew={handleNew}
-					onOpen={handleOpenRecent}
-					onDelete={handleDeleteRecent}
-					onClose={() => setMenuOpen(false)}
-				/>
 			)}
 		</div>
 	);

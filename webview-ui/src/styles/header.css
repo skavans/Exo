@@ -7,15 +7,9 @@
 	display: flex;
 	align-items: center;
 	gap: var(--ct-space-sm);
-	padding: var(--ct-space-sm) var(--ct-space-lg);
+	padding: var(--ct-space-xs) var(--ct-space-md);
 	border-bottom: 1px solid var(--ct-border-default);
 	flex-shrink: 0;
-}
-
-/* Tab header — the tab bar itself (active tab carries the session title). */
-.chat-header.tab-mode {
-	padding: var(--ct-space-xs) var(--ct-space-md);
-	gap: var(--ct-space-sm);
 }
 
 /* Context pill — compact token counter, tinted by context fill.
@@ -48,4 +42,32 @@
 .ctx-pill.red {
 	color: #cf222e;
 	background: color-mix(in srgb, #cf222e 16%, transparent);
+}
+
+/* Empty-session placeholder (no active session). */
+.session-empty {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--ct-space-sm);
+	padding: var(--ct-space-3xl);
+}
+
+.empty-new-btn {
+	margin-top: var(--ct-space-sm);
+	padding: var(--ct-space-sm) var(--ct-space-lg);
+	border: 1px solid var(--ct-border-subtle);
+	border-radius: var(--ct-radius-xs);
+	background: none;
+	color: var(--ct-text-primary);
+	cursor: pointer;
+	font-size: var(--ct-text-sm);
+	transition: background var(--ct-transition-fast), border-color var(--ct-transition-fast);
+}
+
+.empty-new-btn:hover {
+	background: var(--ct-bg-hover);
+	border-color: var(--ct-border-strong);
 }

@@ -10,7 +10,6 @@
 @import './styles/input.css';
 @import './styles/controls.css';
 @import './styles/plan.css';
-@import './styles/tabs.css';
-@import './styles/menu.css';
+@import './styles/session-header.css';
 @import './styles/header.css';
 @import 'katex/dist/katex.min.css';
