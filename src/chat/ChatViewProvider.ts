@@ -2,30 +2,28 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { getConfigPath } from '../config';
 import type { ConfigWatcher } from '../configWatcher';
-import { Files } from '../files/Files';
 import type { ChatMessage, PendingPermission, ToolCallInfo } from './types';
-import type { Plan, PlanItem } from '../tools/types';
+import type { Plan } from '../tools/types';
 import { WebviewMessageHandler } from './handlers/WebviewMessageHandler';
 import { HtmlProvider } from './HtmlProvider';
-import { StreamThrottle } from './StreamThrottle';
 import { AcpClient, type AcpClientCallbacks } from '../acp/AcpClient';
+import { SessionRuntime, type SessionRuntimeCallbacks } from './SessionRuntime';
 import { buildConfigSelectors } from './configSelectors';
 import { handleReadTextFile, handleWriteTextFile, type FsHandlerContext } from '../acp/handlers/fs';
-import { extractPlanFromToolArgs } from '../vendor/opencode';
-import { applyToolCallPatch, type EditSpec } from '../acp/handlers/util';
 import {
 	handleRequestPermission,
 	resolvePermission as resolvePermissionImpl,
 	cancelAllPermissions,
 	type PermissionHandlerContext,
 } from '../acp/handlers/permission';
-import type { PlanEntry, ContentBlock } from '@agentclientprotocol/sdk';
-import type { AvailableCommand } from '@agentclientprotocol/sdk';
+import { applyToolCallPatch, type EditSpec } from '../acp/handlers/util';
+import { createWorktree, registerWorktreeInScm, removeWorktree, hasUncommittedChanges } from '../worktree';
+import { StreamThrottle } from './StreamThrottle';
+import type { AvailableCommand, PlanEntry } from '@agentclientprotocol/sdk';
 
 interface PersistedChatUiState {
+	tabs: Array<{ sessionId: string; title: string; cwd: string }>;
 	activeSessionId: string | null;
-	view: 'list' | 'chat';
-	sessionTitle: string;
 }
 
 interface DraftState {
@@ -33,74 +31,53 @@ interface DraftState {
 	attachedFiles: string[];
 }
 
+/** Session registry entry (the "recent sessions" menu source). Persistent. */
+interface SessionRegistryEntry {
+	sessionId: string;
+	title: string;
+	updatedAt: number;
+	cwd: string;
+}
+
+const MAX_RECENT_SESSIONS = 10;
+
 /**
- * ChatViewProvider — thin ACP client (push-model).
+ * ChatViewProvider — registry of parallel session runtimes.
  *
- * No local session/history storage — the agent is the source of truth.
- * Eager connect on ready → session/list → UI. Sessions are created/loaded
- * via ACP (session/new|load|resume|close|delete). Session/load replay flows
- * through onNotification → _dispatchUpdate → callbacks (same as prompt).
+ * One tab = one `SessionRuntime` = one agent subprocess with its own cwd
+ * (usually a git worktree). Switching tabs is a pure view change: runtimes
+ * keep running while hidden. Closed tabs return to the recent-sessions menu;
+ * only `deleteSession` permanently removes a session (and its worktree).
  */
 export class ChatViewProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'exo.chatView';
 
 	public view?: vscode.WebviewView;
-	public messages: ChatMessage[] = [];
-	public isStreaming = false;
-	public agentRunning = false;
-	public stopped = false;
 
 	/** Shared content store for the `exo-diff:` scheme (edit-permission Diff Editor). */
 	public readonly diffContents = new Map<string, string>();
 
-	// Permission flow (ACP session/request_permission)
-	public readonly pendingPermissions = new Map<string, PendingPermission>();
-	private _permissionRequestIdCounter = 0;
+	/** Live session runtimes, keyed by session id. */
+	public readonly sessions = new Map<string, SessionRuntime>();
+
+	private _activeSessionId: string | null = null;
+
+	/** Open tabs (persistent). Order matters (left→right). */
+	private _tabList: Array<{ sessionId: string; title: string; cwd: string }> = [];
+
+	/** Recent-sessions registry (persistent) — drives the "+" menu. */
+	private _sessionRegistry = new Map<string, SessionRegistryEntry>();
+
 	private _autoAllowPermissions = false;
-
-	/** Follow-up message pending after a reject-with-response (sent when turn ends). */
-	private _pendingFollowUpMessage: string | null = null;
-
-	/** Current mode id from ACP (onCurrentModeUpdate) */
-	public mode = '';
-
-	// File cache (used by fs/read_text_file and replaceFull)
-	public readonly files = new Files();
-
-	// ACP
-	public acpClient: AcpClient | null = null;
-
-	/** ACP toolCallId → ToolCallInfo (for updates via tool_call_update). Cleared on new turn start. */
-	public readonly toolCallInfos = new Map<string, ToolCallInfo>();
-
-	// Streaming state
-	public streamingIndex: number | null = null;
-	public streamThrottle: StreamThrottle | null = null;
-
-	/** Current plan (ACP session/update 'plan') + usage (context bar). */
-	public currentPlan: Plan | null = null;
-	public currentUsage: { used: number; size: number } | null = null;
-	public availableCommands: AvailableCommand[] = [];
-
-	// Replay state (session/load history reconstruction)
-	private _replaying = false;
-	private _lastReplayMsgId: string | null = null;
-	private _replayUpdateTimer: ReturnType<typeof setTimeout> | null = null;
-
-	// Current session (runtime, not persisted)
-	private _currentTitle = '';
-
-	/** Title cache from session/list (for openSession). */
-	private readonly _sessionTitles = new Map<string, string>();
+	private _readyHandled = false;
+	private _draftState: DraftState = { text: '', attachedFiles: [] };
+	private _persistUiTimer: ReturnType<typeof setTimeout> | null = null;
+	private _persistRegistryTimer: ReturnType<typeof setTimeout> | null = null;
+	private _persistRegistryDirty = false;
 
 	private readonly _messageHandler: WebviewMessageHandler;
 	private readonly _htmlProvider: HtmlProvider;
 	private readonly _extensionUri: vscode.Uri;
-	private _viewMode: 'list' | 'chat' = 'list';
-	private _readyHandled = false;
-	private _activeSessionIdOverride: string | null = null;
-	private _draftState: DraftState = { text: '', attachedFiles: [] };
-	private _persistUiTimer: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(
 		extensionUri: vscode.Uri,
@@ -150,18 +127,106 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		});
 	}
 
-	/** Palette command: new session. */
-	public async handleNewSessionCommand(): Promise<void> {
-		await vscode.commands.executeCommand('exo.chatView.focus');
-		try {
-			await this.connectAcp(this.getWorkspaceRoot());
-			await this.newSession();
-		} catch (err) {
-			console.error('[Exo ACP] newSession command failed:', err);
+	// ------------------------------------------------------------------
+	// Active session (proxy access for WebviewMessageHandler / StreamThrottle)
+	// ------------------------------------------------------------------
+
+	get session(): SessionRuntime | null {
+		if (!this._activeSessionId) {
+			return null;
 		}
+		return this.sessions.get(this._activeSessionId) ?? null;
 	}
 
-	/** Webview ready: eager connect + session/list. */
+	get activeSessionId(): string | null {
+		return this._activeSessionId;
+	}
+
+	/** cwd of the active session (fallback: workspace root). */
+	get cwd(): string {
+		return this.session?.cwd ?? this.getWorkspaceRoot();
+	}
+
+	get messages(): ChatMessage[] {
+		return this.session?.messages ?? [];
+	}
+
+	get streamingIndex(): number | null {
+		return this.session?.streamingIndex ?? null;
+	}
+
+	set streamingIndex(v: number | null) {
+		if (this.session) this.session.streamingIndex = v;
+	}
+
+	get streamThrottle(): StreamThrottle | null {
+		return this.session?.streamThrottle ?? null;
+	}
+
+	get toolCallInfos(): Map<string, ToolCallInfo> {
+		return this.session?.toolCallInfos ?? new Map();
+	}
+
+	get isStreaming(): boolean {
+		return this.session?.isStreaming ?? false;
+	}
+
+	set isStreaming(v: boolean) {
+		if (this.session) this.session.isStreaming = v;
+	}
+
+	get agentRunning(): boolean {
+		return this.session?.agentRunning ?? false;
+	}
+
+	set agentRunning(v: boolean) {
+		if (this.session) this.session.agentRunning = v;
+	}
+
+	get stopped(): boolean {
+		return this.session?.stopped ?? false;
+	}
+
+	set stopped(v: boolean) {
+		if (this.session) this.session.stopped = v;
+	}
+
+	get pendingPermissions(): Map<string, PendingPermission> {
+		return this.session?.pendingPermissions ?? new Map();
+	}
+
+	get currentPlan(): Plan | null {
+		return this.session?.currentPlan ?? null;
+	}
+
+	get currentUsage(): { used: number; size: number } | null {
+		return this.session?.currentUsage ?? null;
+	}
+
+	get availableCommands(): AvailableCommand[] {
+		return this.session?.availableCommands ?? [];
+	}
+
+	get mode(): string {
+		return this.session?.mode ?? '';
+	}
+
+	set mode(v: string) {
+		if (this.session) this.session.mode = v;
+	}
+
+	// ------------------------------------------------------------------
+	// Lifecycle
+	// ------------------------------------------------------------------
+
+	/** Palette command: focus + open the session picker (new/recent menu). */
+	public async openSessionPicker(): Promise<void> {
+		await vscode.commands.executeCommand('exo.chatView.focus');
+		this.sendSessionList();
+		this.view?.webview.postMessage({ type: 'showSessionPicker' });
+	}
+
+	/** Webview ready: eager connect to the persisted active tab; tabs load lazily. */
 	public async handleReady(): Promise<void> {
 		if (!this._readyHandled) {
 			this._readyHandled = true;
@@ -173,211 +238,604 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 		try {
-			await this.connectAcp(this.getWorkspaceRoot());
-			await this.refreshSessionList();
-			const activeSessionId = this.activeSessionId;
-			if (activeSessionId) {
-				await this.openSession(activeSessionId);
+			this.sendTabs();
+			this.sendSessionList();
+			if (this._activeSessionId) {
+				await this.switchSession(this._activeSessionId);
 				return;
 			}
-			if (this._viewMode === 'chat') {
-				this.showChat();
-			} else {
-				this.showSessionList();
-			}
+			this.showEmpty();
 		} catch (err) {
 			console.error('[Exo ACP] eager connect failed:', err);
 			vscode.window.showErrorMessage(`Exo: ${err instanceof Error ? err.message : String(err)}`);
-			this.view?.webview.postMessage({ type: 'updateSessionList', sessions: [] });
+			this.showEmpty();
 		}
 	}
 
-	// --- Session lifecycle (agent-driven) ---
+	// ------------------------------------------------------------------
+	// Session lifecycle
+	// ------------------------------------------------------------------
 
-	/** Open a session from the agent's list (load with replay OR resume without replay). */
-	public async openSession(sessionId: string): Promise<void> {
-		if (!this.acpClient) {
-			return;
-		}
-		const cwd = this.getWorkspaceRoot();
-		try {
-			if (this.acpClient.canLoadSession) {
-				this._startReplay();
-				this._currentTitle = this._sessionTitles.get(sessionId) ?? 'Chat';
-				await this.acpClient.sessionLoad(sessionId, cwd);
-				this._endReplay();
-			} else if (this.acpClient.canResume) {
-				await this.acpClient.sessionResume(sessionId, cwd);
-				this.messages = [];
-				this._currentTitle = this._sessionTitles.get(sessionId) ?? 'Chat';
-			} else {
-				vscode.window.showWarningMessage('Agent cannot load or resume sessions');
-				return;
-			}
-			this.toolCallInfos.clear();
-			this.currentPlan = null;
-			this.currentUsage = null;
-			this.stopped = false;
-			this._activeSessionIdOverride = null;
-			this.showChat();
-		} catch (err) {
-			console.error('[Exo ACP] openSession failed, starting new:', err);
-			this._endReplay();
-			await this.newSession();
-		}
-	}
-
-	/** New session (session/new). */
+	/** Create a brand-new session: worktree (or shared root) cwd + session/new. */
 	public async newSession(): Promise<void> {
-		if (!this.acpClient) {
+		if (!this.acpAgentConfig()) {
 			return;
 		}
-		const cwd = this.getWorkspaceRoot();
+		let cwd = this.getWorkspaceRoot();
 		try {
-			await this.acpClient.sessionNew(cwd);
-			this.messages = [];
-			this.toolCallInfos.clear();
-			this.currentPlan = null;
-			this.currentUsage = null;
-			this._currentTitle = 'New Chat';
-			this.stopped = false;
-			this._activeSessionIdOverride = null;
-			this.showChat();
+			const wt = await createWorktree(this.getWorkspaceRoot());
+			if (wt) {
+				cwd = wt.path;
+				void registerWorktreeInScm(cwd);
+			}
+		} catch (err) {
+			console.error('[Exo] worktree creation failed, using shared root:', err);
+		}
+		const sessionId = `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+		try {
+			const runtime = await this.spawnSession(sessionId, cwd, 'new');
+			this.finishSessionOpen(runtime, 'New Chat');
 		} catch (err) {
 			console.error('[Exo ACP] newSession failed:', err);
 			vscode.window.showErrorMessage(`Failed to create session: ${err instanceof Error ? err.message : String(err)}`);
 		}
 	}
 
-	/** Delete session on the agent + refresh the list. */
-	public async deleteSession(sessionId: string): Promise<void> {
-		if (!this.acpClient) {
+	/**
+	 * Switch to a session (tab click or menu click). If the runtime is already
+	 * alive — show it. If it's only a persisted tab/registry entry — spawn a
+	 * fresh agent (session/load or session/resume) lazily.
+	 */
+	public async switchSession(sessionId: string): Promise<void> {
+		const existing = this.sessions.get(sessionId);
+		if (existing && existing.acpClient.connected) {
+			this.showSessionRuntime(existing);
 			return;
 		}
+		// Lazy spawn: recreate the agent process and reload the session.
+		const meta = this._tabList.find((t) => t.sessionId === sessionId)
+			?? { sessionId, title: this._sessionRegistry.get(sessionId)?.title ?? 'Chat', cwd: this._sessionRegistry.get(sessionId)?.cwd };
+		const cwd = meta.cwd ?? this.getWorkspaceRoot();
+		if (cwd !== this.getWorkspaceRoot()) {
+			void registerWorktreeInScm(cwd);
+		}
 		try {
-			if (this.acpClient.canDelete) {
-				await this.acpClient.deleteSession(sessionId);
-			}
+			const runtime = await this.spawnSession(sessionId, cwd, 'load');
+			this.finishSessionOpen(runtime, meta.title);
 		} catch (err) {
-			console.error('[Exo ACP] deleteSession failed:', err);
-		}
-		if (this.acpClient.sessionId === sessionId) {
-			await this.closeCurrentSession();
-		}
-		await this.refreshSessionList();
-	}
-
-	/** Close the current session (session/close) + return to the list. */
-	public async closeCurrentSession(): Promise<void> {
-		if (this.acpClient) {
-			const sid = this.acpClient.sessionId;
-			if (sid && this.acpClient.canClose) {
-				await this.acpClient.closeSession(sid);
+			console.error('[Exo ACP] switchSession failed:', err);
+			// Session load failed — restart it (agent may have lost the session).
+			try {
+				const runtime = await this.spawnSession(sessionId, cwd, 'new');
+				this.finishSessionOpen(runtime, 'New Chat');
+			} catch (err2) {
+				console.error('[Exo ACP] fallback newSession failed:', err2);
+				vscode.window.showErrorMessage(`Failed to open session ${sessionId}`);
 			}
 		}
-		this.messages = [];
-		this.currentPlan = null;
-		this.currentUsage = null;
-		this._currentTitle = '';
-		this._activeSessionIdOverride = null;
-		this.toolCallInfos.clear();
-		await this.refreshSessionList();
-		this.showSessionList();
 	}
 
-	public showSessionList(): void {
-		this._viewMode = 'list';
-		this.persistUiStateSoon();
-		this.view?.webview.postMessage({ type: 'showSessionList' });
-	}
-
-	/** Show the "no agent configured" onboarding screen in the webview. */
-	public showConfigRequired(): void {
-		this._viewMode = 'list';
-		this.view?.webview.postMessage({ type: 'showConfigRequired', configPath: getConfigPath() });
-	}
-
-	/** Refresh the session list from the agent (session/list). */
-	public async refreshSessionList(): Promise<void> {
-		if (!this.acpClient || !this.acpClient.canList) {
-			this.view?.webview.postMessage({ type: 'updateSessionList', sessions: [] });
-			return;
-		}
-		try {
-			const cwd = this.getWorkspaceRoot();
-			const resp = await this.acpClient.listSessions(cwd);
-			this._sessionTitles.clear();
-			for (const s of resp.sessions) {
-				if (s.title) {
-					this._sessionTitles.set(s.sessionId, s.title);
+	/** Close the tab: kill the agent process. Session stays in the recent menu. */
+	public async closeTab(sessionId: string): Promise<void> {
+		const runtime = this.sessions.get(sessionId);
+		if (runtime) {
+			try {
+				if (runtime.acpClient.canClose) {
+					await runtime.acpClient.closeSession(sessionId);
 				}
+			} catch (err) {
+				console.error('[Exo ACP] closeSession failed (best-effort):', err);
 			}
-			this.view?.webview.postMessage({ type: 'updateSessionList', sessions: resp.sessions });
+			try {
+				runtime.acpClient.disconnect();
+			} catch { /* ignore */ }
+			cancelAllPermissions(this.permissionContext(runtime));
+			this.sessions.delete(sessionId);
+		}
+		this._tabList = this._tabList.filter((t) => t.sessionId !== sessionId);
+		this.persistUiStateSoon();
+		this.sendTabs();
+		if (this._activeSessionId === sessionId) {
+			const next = this._tabList[this._tabList.length - 1];
+			if (next) {
+				await this.switchSession(next.sessionId);
+			} else {
+				this.showEmpty();
+			}
+		}
+		this.sendSessionList();
+	}
+
+	/** Permanently delete a session (from the recent menu). Optimistic UI; worktree handling in background. */
+	public async deleteSession(sessionId: string): Promise<void> {
+		const entry = this._sessionRegistry.get(sessionId);
+		const listEntry = this._tabList.find((t) => t.sessionId === sessionId);
+		const cwd = listEntry?.cwd ?? entry?.cwd;
+
+		// 1. Delete on the agent — from the live runtime or a temp process.
+		const runtime = this.sessions.get(sessionId);
+		try {
+			if (runtime) {
+				try {
+					if (runtime.acpClient.canDelete) {
+						await runtime.acpClient.deleteSession(sessionId);
+					}
+				} finally {
+					try { runtime.acpClient.disconnect(); } catch { /* ignore */ }
+					this.sessions.delete(sessionId);
+				}
+			} else if (cwd) {
+				await this.deleteSessionViaTempAgent(sessionId, cwd);
+			}
 		} catch (err) {
-			console.error('[Exo ACP] listSessions failed:', err);
-			this.view?.webview.postMessage({ type: 'updateSessionList', sessions: [] });
+			console.error('[Exo ACP] deleteSession failed (optimistic — continuing):', err);
+		}
+
+		// 2. Remove from tabs/registry.
+		this._tabList = this._tabList.filter((t) => t.sessionId !== sessionId);
+		this._sessionRegistry.delete(sessionId);
+		if (this._activeSessionId === sessionId) {
+			const next = this._tabList[this._tabList.length - 1];
+			if (next) {
+				await this.switchSession(next.sessionId);
+			} else {
+				this.showEmpty();
+			}
+		}
+		this.persistUiStateSoon();
+
+		// 3. Worktree cleanup (background-ish, may prompt).
+		if (cwd && cwd !== this.getWorkspaceRoot()) {
+			try {
+				const dirty = await hasUncommittedChanges(cwd);
+				if (dirty) {
+					const choice = await vscode.window.showWarningMessage(
+						'This session\'s worktree has uncommitted changes. Delete the worktree anyway?',
+						{ modal: true },
+						'Delete worktree',
+						'Keep worktree',
+					);
+					if (choice !== 'Delete worktree') {
+						this.sendTabs();
+						this.sendSessionList();
+						return;
+					}
+				}
+				await removeWorktree(cwd);
+			} catch (err) {
+				console.error('[Exo] worktree removal failed:', err);
+			}
+		}
+		this.sendTabs();
+		this.sendSessionList();
+	}
+
+	private async deleteSessionViaTempAgent(sessionId: string, cwd: string): Promise<void> {
+		const cfg = this.acpAgentConfig();
+		if (!cfg) {
+			return;
+		}
+		const client = new AcpClient(cfg, {
+			onAgentMessageChunk: () => {},
+			onAgentThoughtChunk: () => {},
+			onUserMessageChunk: () => {},
+			onToolCallCreate: () => {},
+			onToolCallUpdate: () => {},
+			onPlan: () => {},
+			onUsageUpdate: () => {},
+			onCurrentModeUpdate: () => {},
+			onConfigOptionUpdate: () => {},
+			onAvailableCommandsUpdate: () => {},
+			onSessionInfoUpdate: () => {},
+			onReadTextFile: () => Promise.reject(new Error('no fs in temp agent')),
+			onWriteTextFile: () => Promise.resolve(),
+			onRequestPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }),
+			onError: (e) => console.error('[Exo ACP] temp agent error:', e),
+			onDisconnect: () => {},
+		});
+		try {
+			await client.connect(cwd);
+			if (client.canDelete) {
+				await client.deleteSession(sessionId);
+			}
+		} catch (err) {
+			console.error('[Exo ACP] temp delete failed:', err);
+		} finally {
+			try {
+				client.disconnect();
+			} catch { /* ignore */ }
 		}
 	}
 
-	// --- Replay (session/load) ---
+	// ------------------------------------------------------------------
+	// Runtime creation & callbacks
+	// ------------------------------------------------------------------
 
-	private _startReplay(): void {
-		this._replaying = true;
-		this._lastReplayMsgId = null;
-		this.messages = [];
-		this.streamingIndex = null;
-		this.toolCallInfos.clear();
-		this.currentPlan = null;
-		this.currentUsage = null;
-		if (this._replayUpdateTimer) {
-			clearTimeout(this._replayUpdateTimer);
-			this._replayUpdateTimer = null;
+	private spawnSession(
+		sessionId: string,
+		cwd: string,
+		mode: 'new' | 'load',
+	): Promise<SessionRuntime> {
+		const cfg = this.acpAgentConfig();
+		if (!cfg) {
+			return Promise.reject(new Error('No ACP agent configured in config.yml (expected agents[0])'));
+		}
+
+		const runtime = new SessionRuntime(sessionId, cwd, this.buildRuntimeCallbacks(sessionId));
+		runtime.acpClient = new AcpClient(cfg, this.buildAcpCallbacks(runtime));
+
+		return (async () => {
+			await runtime.acpClient.connect(cwd);
+			if (mode === 'new') {
+				await runtime.acpClient.sessionNew(cwd);
+			} else if (runtime.acpClient.canLoadSession) {
+				this.startReplay(runtime);
+				await runtime.acpClient.sessionLoad(sessionId, cwd);
+				this.endReplay(runtime);
+			} else if (runtime.acpClient.canResume) {
+				await runtime.acpClient.sessionResume(sessionId, cwd);
+				runtime.messages = [];
+				this.endReplay(runtime);
+			} else {
+				throw new Error('Agent cannot load or resume sessions');
+			}
+			return runtime;
+		})();
+	}
+
+	/** Register the runtime in sessions + tabs + registry, save state, show it. */
+	private finishSessionOpen(runtime: SessionRuntime, title: string): void {
+		this.sessions.set(runtime.id, runtime);
+		runtime.title = title;
+		if (!this._tabList.some((t) => t.sessionId === runtime.id)) {
+			this._tabList.push({ sessionId: runtime.id, title, cwd: runtime.cwd });
+		}
+		this.upsertSessionRegistry(runtime.id, title, runtime.cwd);
+		this.persistUiStateSoon();
+		this.showSessionRuntime(runtime);
+		this.sendTabs();
+		this.sendSessionList();
+	}
+
+	private buildRuntimeCallbacks(sessionId: string): SessionRuntimeCallbacks {
+		return {
+			sendPlan: () => {
+				if (this._activeSessionId !== sessionId) return;
+				this.view?.webview.postMessage({ type: 'updatePlan', plan: this.currentPlan });
+			},
+			sendMessages: () => this.updateMessages(),
+			sendTokenUsage: () => {
+				if (this._activeSessionId !== sessionId) return;
+				this.sendTokenUsageFor(sessionId);
+			},
+			sendConfig: () => this.sendConfig(),
+			sendCommands: () => {
+				if (this._activeSessionId !== sessionId) return;
+				this.sendAvailableCommandsFor(sessionId);
+			},
+			sendTabs: () => this.sendTabs(),
+			sendAgentRunning: (running: boolean) => {
+				if (this._activeSessionId !== sessionId) return;
+				this.view?.webview.postMessage({ type: 'updateAgentRunning', running });
+			},
+			isActive: () => this._activeSessionId === sessionId,
+			sendStreamChunk: (index, blocks) => {
+				if (this._activeSessionId !== sessionId) return;
+				this.view?.webview.postMessage({ type: 'streamChunk', sessionId, index, blocks });
+			},
+		};
+	}
+
+	private buildAcpCallbacks(runtime: SessionRuntime): AcpClientCallbacks {
+		const sessionId = runtime.id;
+		return {
+			onAgentMessageChunk: (_msgId, content) => {
+				if (content.type !== 'text') return;
+				if (runtime.replaying) {
+					const msgId = _msgId ?? null;
+					if (msgId !== runtime.lastReplayMsgId) {
+						runtime.messages.push({ role: 'assistant', blocks: [], isStreaming: true });
+						runtime.streamingIndex = runtime.messages.length - 1;
+						runtime.lastReplayMsgId = msgId;
+					}
+					runtime.appendStreamChunk(content.text);
+					this.scheduleReplayUpdate(runtime);
+				} else {
+					runtime.appendStreamChunk(content.text);
+				}
+			},
+			onAgentThoughtChunk: (_msgId, content) => {
+				if (content.type !== 'text') return;
+				if (runtime.replaying) {
+					if (runtime.streamingIndex === null) {
+						runtime.messages.push({ role: 'assistant', blocks: [], isStreaming: true });
+						runtime.streamingIndex = runtime.messages.length - 1;
+						runtime.lastReplayMsgId = _msgId ?? null;
+					}
+					runtime.appendThoughtChunk(content.text);
+					this.scheduleReplayUpdate(runtime);
+				} else {
+					runtime.appendThoughtChunk(content.text);
+				}
+			},
+			onUserMessageChunk: (msgId, content) => {
+				if (!runtime.replaying || content.type !== 'text') return;
+				const id = msgId ?? null;
+				if (id !== runtime.lastReplayMsgId) {
+					runtime.messages.push({ role: 'user', blocks: [{ type: 'text', content: '' }] });
+					runtime.lastReplayMsgId = id;
+				}
+				const last = runtime.messages[runtime.messages.length - 1];
+				const lastBlock = last.blocks[last.blocks.length - 1];
+				if (lastBlock && lastBlock.type === 'text') {
+					lastBlock.content += content.text;
+				} else {
+					last.blocks.push({ type: 'text', content: content.text });
+				}
+				this.scheduleReplayUpdate(runtime);
+			},
+			onToolCallCreate: (update) => {
+				const tc: ToolCallInfo = {
+					name: 'other',
+					args: {},
+					status: mapToolStatus(update.status),
+					summary: update.title ?? update.kind ?? '',
+					toolCallId: update.toolCallId,
+				};
+				applyToolCallPatch(tc, update);
+				runtime.pushToolCallToStreaming(tc);
+				runtime.toolCallInfos.set(update.toolCallId, tc);
+				runtime.maybeSyncPlanFromTool(tc);
+				if (runtime.replaying) {
+					this.scheduleReplayUpdate(runtime);
+				} else {
+					this.updateMessages();
+				}
+			},
+			onToolCallUpdate: (update) => {
+				const tc = runtime.toolCallInfos.get(update.toolCallId);
+				if (!tc) return;
+				applyToolCallPatch(tc, update);
+				if (update.status) {
+					tc.status = mapToolStatus(update.status);
+					if (tc.status === 'error') {
+						tc.isError = true;
+					}
+				}
+				runtime.maybeSyncPlanFromTool(tc);
+				if (runtime.replaying) {
+					this.scheduleReplayUpdate(runtime);
+				} else {
+					this.updateMessages();
+				}
+			},
+			onPlan: (entries: PlanEntry[]) => {
+				runtime.currentPlan = runtime.mapPlanEntries(entries);
+				runtime.callbacks.sendPlan();
+			},
+			onUsageUpdate: (update) => {
+				runtime.currentUsage = { used: update.used, size: update.size };
+				runtime.callbacks.sendTokenUsage();
+			},
+			onCurrentModeUpdate: (modeId) => {
+				runtime.mode = modeId;
+				runtime.callbacks.sendConfig();
+			},
+			onConfigOptionUpdate: () => {
+				runtime.callbacks.sendConfig();
+			},
+			onAvailableCommandsUpdate: (commands) => {
+				runtime.availableCommands = commands;
+				runtime.callbacks.sendCommands();
+			},
+			onSessionInfoUpdate: (title, updatedAt) => {
+				if (title) {
+					runtime.title = title;
+					const t = this._tabList.find((x) => x.sessionId === sessionId);
+					if (t) t.title = title;
+					this.upsertSessionRegistry(
+						sessionId,
+						title,
+						runtime.cwd,
+						updatedAt ? new Date(updatedAt).getTime() : undefined,
+					);
+					if (this._activeSessionId === sessionId) {
+						this.view?.webview.postMessage({ type: 'sessionTitleUpdate', sessionId, title });
+					}
+					this.persistUiStateSoon();
+					this.sendTabs();
+					this.sendSessionList();
+				}
+			},
+			onReadTextFile: (p) => handleReadTextFile(p, this.fsContext(runtime)),
+			onWriteTextFile: (p) => handleWriteTextFile(p, this.fsContext(runtime)),
+			onRequestPermission: (p) => handleRequestPermission(p, this.permissionContext(runtime)),
+			onError: (e) => console.error('[Exo ACP] error:', e),
+			onDisconnect: () => {
+				cancelAllPermissions(this.permissionContext(runtime));
+				runtime.isStreaming = false;
+				runtime.agentRunning = false;
+				if (this.sessions.get(sessionId) === runtime) {
+					this.sessions.delete(sessionId);
+				}
+				if (this._activeSessionId === sessionId) {
+					this.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
+				}
+				this.sendTabs();
+			},
+		};
+	}
+
+	// ------------------------------------------------------------------
+	// Replay (session/load)
+	// ------------------------------------------------------------------
+
+	private startReplay(runtime: SessionRuntime): void {
+		runtime.replaying = true;
+		runtime.lastReplayMsgId = null;
+		runtime.messages = [];
+		runtime.streamingIndex = null;
+		runtime.toolCallInfos.clear();
+		runtime.currentPlan = null;
+		runtime.currentUsage = null;
+		if (runtime.replayUpdateTimer) {
+			clearTimeout(runtime.replayUpdateTimer);
+			runtime.replayUpdateTimer = null;
 		}
 	}
 
-	private _endReplay(): void {
-		this._replaying = false;
-		this._lastReplayMsgId = null;
-		if (this._replayUpdateTimer) {
-			clearTimeout(this._replayUpdateTimer);
-			this._replayUpdateTimer = null;
+	private endReplay(runtime: SessionRuntime): void {
+		runtime.replaying = false;
+		runtime.lastReplayMsgId = null;
+		if (runtime.replayUpdateTimer) {
+			clearTimeout(runtime.replayUpdateTimer);
+			runtime.replayUpdateTimer = null;
 		}
 		// Replay machinery marks every assistant message `isStreaming: true`;
 		// clear them ALL, or the loaded history "blinks" like it's live.
-		for (const msg of this.messages) {
+		for (const msg of runtime.messages) {
 			msg.isStreaming = false;
 			msg._lastChunkKind = null;
-			this._setReasoningActive(msg, false);
 		}
-		this.streamingIndex = null;
-		this.isStreaming = false;
+		runtime.streamingIndex = null;
+		runtime.isStreaming = false;
 		this.updateMessages();
 	}
 
-	private _scheduleReplayUpdate(): void {
-		if (this._replayUpdateTimer) {
+	private scheduleReplayUpdate(runtime: SessionRuntime): void {
+		if (runtime.replayUpdateTimer) {
 			return;
 		}
-		this._replayUpdateTimer = setTimeout(() => {
-			this._replayUpdateTimer = null;
+		runtime.replayUpdateTimer = setTimeout(() => {
+			runtime.replayUpdateTimer = null;
 			this.updateMessages();
 		}, 50);
 	}
 
-	// --- Config ---
+	// ------------------------------------------------------------------
+	// Webview updates
+	// ------------------------------------------------------------------
+
+	public showEmpty(): void {
+		this._activeSessionId = null;
+		this.persistUiStateSoon();
+		this.view?.webview.postMessage({ type: 'showEmpty' });
+		this.sendTabs();
+	}
+
+	/** Show a runtime's chat in the webview. */
+	private showSessionRuntime(runtime: SessionRuntime): void {
+		this._activeSessionId = runtime.id;
+		this.persistUiStateSoon();
+		this.view?.webview.postMessage({
+			type: 'showChat',
+			sessionId: runtime.id,
+			messages: runtime.messages,
+			plan: runtime.currentPlan,
+			title: runtime.title || 'Chat',
+		});
+		this.sendAgentInfo();
+		this.sendConfig();
+		this.sendAvailableCommandsFor(runtime.id);
+		this.sendPromptCapabilities();
+		this.sendColorTheme();
+		this.view?.webview.postMessage({ type: 'updateAgentRunning', running: runtime.agentRunning });
+		this.view?.webview.postMessage({ type: 'updateAutoAllowPermissions', value: this._autoAllowPermissions });
+		this.sendTokenUsageFor(runtime.id);
+		this.postDraftState();
+		this.sendTabs();
+	}
+
+	public updateMessages(): void {
+		this.view?.webview.postMessage({ type: 'updateMessages', messages: this.messages });
+	}
+
+	/** Tab strip: title + status per open tab. */
+	public sendTabs(): void {
+		const tabs = this._tabList.map((t) => {
+			const runtime = this.sessions.get(t.sessionId);
+			return {
+				sessionId: t.sessionId,
+				title: runtime?.title || t.title,
+				status: runtime ? runtime.status : 'idle',
+			};
+		});
+		this.view?.webview.postMessage({ type: 'updateTabs', tabs, activeSessionId: this._activeSessionId });
+	}
+
+	/** Recent-sessions menu data (registry, newest first, capped). */
+	public sendSessionList(): void {
+		const sessions = [...this._sessionRegistry.values()]
+			.sort((a, b) => b.updatedAt - a.updatedAt)
+			.slice(0, MAX_RECENT_SESSIONS)
+			.map((e) => ({
+				sessionId: e.sessionId,
+				title: e.title || 'Untitled',
+				updatedAt: e.updatedAt,
+				active: this.sessions.has(e.sessionId),
+			}));
+		this.view?.webview.postMessage({ type: 'updateSessions', sessions });
+	}
+
+	public sendAgentInfo(): void {
+		this.view?.webview.postMessage({
+			type: 'updateAgentInfo',
+			agentInfo: this.acpAgentConfig() ? this.activeClientInfo() : null,
+		});
+	}
+
+	private activeClientInfo(): { name: string; title?: string; version?: string } | null {
+		const client = this.session?.acpClient;
+		if (!client) return null;
+		const info = client.agentInfo;
+		if (!info) return null;
+		return info;
+	}
+
+	public sendPromptCapabilities(): void {
+		this.view?.webview.postMessage({
+			type: 'updatePromptCapabilities',
+			image: this.session?.acpClient.canPromptImage ?? false,
+		});
+	}
+
+	public sendColorTheme(): void {
+		const name = vscode.workspace.getConfiguration('workbench').get<string>('colorTheme') ?? null;
+		this.view?.webview.postMessage({ type: 'updateColorTheme', name });
+	}
+
+	public sendTokenUsageFor(_sessionId: string): void {
+		const usage = this.session?.currentUsage;
+		if (!usage) return;
+		this.view?.webview.postMessage({
+			type: 'updateTokenUsage',
+			usage: { prompt_tokens: usage.used },
+			tokenLimit: usage.size,
+		});
+	}
+
+	public sendAvailableCommandsFor(_sessionId: string): void {
+		this.view?.webview.postMessage({ type: 'updateCommands', commands: this.availableCommands });
+	}
+
+	// ------------------------------------------------------------------
+	// Config
+	// ------------------------------------------------------------------
+
+	public acpAgentConfig() {
+		return this.configWatcher.config.agents?.[0];
+	}
 
 	public sendConfig(): void {
-		const client = this.acpClient;
+		const client = this.session?.acpClient;
 		if (!client) {
 			this.view?.webview.postMessage({ type: 'updateConfig', selectors: [], modeColorIndex: {} });
 			return;
 		}
-const { selectors, currentModeId } = buildConfigSelectors(
-		client.configOptions ?? null,
-	);
-	if (currentModeId) {
-		this.mode = currentModeId;
-	}
+		const { selectors, currentModeId } = buildConfigSelectors(client.configOptions ?? null);
+		if (currentModeId && this.session) {
+			this.session.mode = currentModeId;
+		}
 
 		// Mode color palette: assign each modeId a stable index 0..9 (persisted).
 		let modeColorIndex: Record<string, number> = {};
@@ -387,19 +845,33 @@ const { selectors, currentModeId } = buildConfigSelectors(
 			if (currentModeId && !ids.includes(currentModeId)) {
 				ids.push(currentModeId);
 			}
-			modeColorIndex = this._assignModeColors(ids);
+			modeColorIndex = this.assignModeColors(ids);
 		}
 
 		this.view?.webview.postMessage({ type: 'updateConfig', selectors, modeColorIndex });
 	}
 
+	/** Change a config option (mode/model/thought_level) via configOptions. */
+	public async selectConfigOption(configId: string, value: string): Promise<void> {
+		const client = this.session?.acpClient;
+		if (!client) {
+			return;
+		}
+		try {
+			await client.setConfigOption(configId, value);
+			this.sendConfig();
+		} catch (e) {
+			console.error(`[Exo ACP] selectConfigOption(${configId}) failed:`, e);
+		}
+	}
+
 	/** modeId → stable color index 0..9 (persisted in globalState). */
-	private _modeColorMap(): Record<string, number> {
+	private modeColorMap(): Record<string, number> {
 		return this.globalState.get<Record<string, number>>('exo.modeColorIndex') ?? {};
 	}
 
-	private _assignModeColors(modeIds: string[]): Record<string, number> {
-		const map = this._modeColorMap();
+	private assignModeColors(modeIds: string[]): Record<string, number> {
+		const map = this.modeColorMap();
 		let changed = false;
 		const used = new Set(Object.values(map));
 		for (const id of modeIds) {
@@ -422,53 +894,9 @@ const { selectors, currentModeId } = buildConfigSelectors(
 		return map;
 	}
 
-	/** Change a config option (mode/model/thought_level) via configOptions. */
-	public async selectConfigOption(configId: string, value: string): Promise<void> {
-		if (!this.acpClient) {
-			return;
-		}
-		try {
-			await this.acpClient.setConfigOption(configId, value);
-			this.sendConfig();
-		} catch (e) {
-			console.error(`[Exo ACP] selectConfigOption(${configId}) failed:`, e);
-		}
-	}
-
-	public sendPlan(): void {
-		this.view?.webview.postMessage({ type: 'updatePlan', plan: this.currentPlan });
-	}
-
-	public sendTokenUsage(): void {
-		if (!this.currentUsage) {
-			return;
-		}
-		this.view?.webview.postMessage({
-			type: 'updateTokenUsage',
-			usage: { prompt_tokens: this.currentUsage.used },
-			tokenLimit: this.currentUsage.size,
-		});
-	}
-
-	public sendAvailableCommands(): void {
-		this.view?.webview.postMessage({ type: 'updateCommands', commands: this.availableCommands });
-	}
-
-	public sendAgentInfo(): void {
-		this.view?.webview.postMessage({ type: 'updateAgentInfo', agentInfo: this.acpClient?.agentInfo ?? null });
-	}
-
-	public sendPromptCapabilities(): void {
-		this.view?.webview.postMessage({
-			type: 'updatePromptCapabilities',
-			image: this.acpClient?.canPromptImage ?? false,
-		});
-	}
-
-	public sendColorTheme(): void {
-		const name = vscode.workspace.getConfiguration('workbench').get<string>('colorTheme') ?? null;
-		this.view?.webview.postMessage({ type: 'updateColorTheme', name });
-	}
+	// ------------------------------------------------------------------
+	// Permissions
+	// ------------------------------------------------------------------
 
 	public get autoAllowPermissions(): boolean {
 		return this._autoAllowPermissions;
@@ -479,305 +907,68 @@ const { selectors, currentModeId } = buildConfigSelectors(
 		this.view?.webview.postMessage({ type: 'updateAutoAllowPermissions', value });
 	}
 
-	public updateDraftState(text: string, attachedFiles: string[]): void {
-		this._draftState = { text, attachedFiles: [...attachedFiles] };
-		void this.workspaceState.update('exo.chatDraft', this._draftState);
-	}
-
-	/** Map ACP PlanEntry[] → UI Plan (content→title, completed→done, id by index). */
-	private mapPlanEntries(entries: PlanEntry[]): Plan {
-		const items: PlanItem[] = entries.map((e, i) => ({
-			id: `step-${i}`,
-			title: e.content,
-			description: '',
-			status: e.status === 'completed' ? 'done' : e.status,
-		}));
-		return { items };
-	}
-
-	/**
-	 * Vendor fallback (opencode): if the tool-call carries a plan in args
-	 * (`{todos:[...]}`), sync currentPlan. The standard ACP plan (onPlan) takes
-	 * priority — it is called directly. This only fires when args really look
-	 * like a plan (shape detection). See src/vendor/opencode/plan.ts.
-	 */
-	private _maybeSyncPlanFromTool(tc: ToolCallInfo): void {
-		const entries = extractPlanFromToolArgs(tc.args);
-		if (!entries) {
+	/** Apply the user's decision from the webview (postMessage `permissionDecision`). */
+	public resolvePermission(
+		requestId: string,
+		decision: { outcome: 'selected'; optionId: string } | { outcome: 'cancelled' },
+		followUpText?: string,
+	): void {
+		const runtime = this.session;
+		if (!runtime) {
 			return;
 		}
-		this.currentPlan = this.mapPlanEntries(entries);
-		this.sendPlan();
-	}
-
-	public updateMessages(): void {
-		this.view?.webview.postMessage({ type: 'updateMessages', messages: this.messages });
-	}
-
-	// --- ACP lifecycle ---
-
-	/** Connect to the agent (spawn + initialize). Idempotent. Does NOT create a session. */
-	public async connectAcp(cwd: string): Promise<void> {
-		if (this.acpClient) {
-			return;
+		resolvePermissionImpl(this.permissionContext(runtime), requestId, decision);
+		if (followUpText && followUpText.trim()) {
+			runtime.pendingFollowUpMessage = followUpText.trim();
+			runtime.messages.push({
+				role: 'user',
+				blocks: [{ type: 'text', content: followUpText.trim() }],
+				isQueued: true,
+			});
 		}
-		const agentCfg = this.configWatcher.config.agents?.[0];
-		if (!agentCfg) {
-			throw new Error('No ACP agent configured in config.yml (expected agents[0])');
-		}
-
-		const callbacks: AcpClientCallbacks = {
-			onAgentMessageChunk: (_msgId, content) => {
-				if (content.type !== 'text') {
-					return;
-				}
-				if (this._replaying) {
-					const msgId = _msgId ?? null;
-					if (msgId !== this._lastReplayMsgId) {
-						this.messages.push({ role: 'assistant', blocks: [], isStreaming: true });
-						this.streamingIndex = this.messages.length - 1;
-						this._lastReplayMsgId = msgId;
-					}
-					this.appendStreamChunk(content.text);
-					this._scheduleReplayUpdate();
-				} else {
-					this.appendStreamChunk(content.text);
-				}
-			},
-			onAgentThoughtChunk: (_msgId, content) => {
-				if (content.type !== 'text') {
-					return;
-				}
-				if (this._replaying) {
-					if (this.streamingIndex === null) {
-						this.messages.push({ role: 'assistant', blocks: [], isStreaming: true });
-						this.streamingIndex = this.messages.length - 1;
-						this._lastReplayMsgId = _msgId ?? null;
-					}
-					this.appendThoughtChunk(content.text);
-					this._scheduleReplayUpdate();
-				} else {
-					this.appendThoughtChunk(content.text);
-				}
-			},
-			onUserMessageChunk: (msgId, content) => {
-				if (!this._replaying || content.type !== 'text') {
-					return;
-				}
-				const id = msgId ?? null;
-				if (id !== this._lastReplayMsgId) {
-					this.messages.push({ role: 'user', blocks: [{ type: 'text', content: '' }] });
-					this._lastReplayMsgId = id;
-				}
-				const last = this.messages[this.messages.length - 1];
-				const lastBlock = last.blocks[last.blocks.length - 1];
-				if (lastBlock && lastBlock.type === 'text') {
-					lastBlock.content += content.text;
-				} else {
-					last.blocks.push({ type: 'text', content: content.text });
-				}
-				this._scheduleReplayUpdate();
-			},
-			onToolCallCreate: (update) => {
-				const tc: ToolCallInfo = {
-					name: 'other',
-					args: {},
-					status: mapToolStatus(update.status),
-					summary: update.title ?? update.kind ?? '',
-					toolCallId: update.toolCallId,
-				};
-				applyToolCallPatch(tc, update);
-				this.pushToolCallToStreaming(tc);
-				this.toolCallInfos.set(update.toolCallId, tc);
-				this._maybeSyncPlanFromTool(tc);
-				if (this._replaying) {
-					this._scheduleReplayUpdate();
-				} else {
-					this.updateMessages();
-				}
-			},
-			onToolCallUpdate: (update) => {
-				const tc = this.toolCallInfos.get(update.toolCallId);
-				if (!tc) {
-					return;
-				}
-				applyToolCallPatch(tc, update);
-				if (update.status) {
-					tc.status = mapToolStatus(update.status);
-					if (tc.status === 'error') {
-						tc.isError = true;
-					}
-				}
-				this._maybeSyncPlanFromTool(tc);
-				if (this._replaying) {
-					this._scheduleReplayUpdate();
-				} else {
-					this.updateMessages();
-				}
-			},
-			onPlan: (entries) => {
-				this.currentPlan = this.mapPlanEntries(entries);
-				this.sendPlan();
-			},
-			onUsageUpdate: (update) => {
-				this.currentUsage = { used: update.used, size: update.size };
-				this.sendTokenUsage();
-			},
-			onCurrentModeUpdate: (modeId) => {
-				this.mode = modeId;
-				this.sendConfig();
-			},
-			onConfigOptionUpdate: () => {
-				this.sendConfig();
-			},
-			onAvailableCommandsUpdate: (commands) => {
-				this.availableCommands = commands;
-				this.sendAvailableCommands();
-			},
-			onSessionInfoUpdate: (title) => {
-				if (title) {
-					this._currentTitle = title;
-					const sid = this.acpClient?.sessionId;
-					if (sid) {
-						this._sessionTitles.set(sid, title);
-					}
-					this.view?.webview.postMessage({ type: 'sessionTitleUpdate', title });
-					this.persistUiStateSoon();
-				}
-			},
-			onReadTextFile: (p) => handleReadTextFile(p, this.fsContext()),
-			onWriteTextFile: (p) => handleWriteTextFile(p, this.fsContext()),
-			onRequestPermission: (p) => handleRequestPermission(p, this.permissionContext()),
-			onError: (e) => console.error('[Exo ACP] error:', e),
-			onDisconnect: () => {
-				this.acpClient = null;
-				cancelAllPermissions(this.permissionContext());
-				this.endStreaming();
-				this.agentRunning = false;
-				this.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
-				this.showSessionList();
-			},
-		};
-
-		this.acpClient = new AcpClient(agentCfg, callbacks);
-		await this.acpClient.connect(cwd);
-		this.availableCommands = this.acpClient.availableCommands ?? [];
-		this.sendAgentInfo();
-		this.sendAvailableCommands();
-		this.sendPromptCapabilities();
-		this.sendColorTheme();
-		console.error(`[Exo ACP] connected: agent=${this.acpClient.agentInfo?.name ?? 'unknown'} canList=${this.acpClient.canList} canLoad=${this.acpClient.canLoadSession} canResume=${this.acpClient.canResume} canClose=${this.acpClient.canClose} canDelete=${this.acpClient.canDelete} canPromptImage=${this.acpClient.canPromptImage}`);
-	}
-
-	/** Full disconnect (extension deactivate / config change). Best-effort session/close + kill. */
-	public disconnectAcp(): void {
-		try {
-			this.acpClient?.disconnect();
-		} catch { /* ignore */ }
-		this.acpClient = null;
-		cancelAllPermissions(this.permissionContext());
-		this.endStreaming();
+		this.updateMessages();
+		this.sendTabs();
 	}
 
 	public cancelPendingOperations(): void {
-		this.stopped = true;
-		this.acpClient?.cancel();
-		this.isStreaming = false;
-
-		cancelAllPermissions(this.permissionContext());
-	}
-
-	public showChat(): void {
-		this._viewMode = 'chat';
-		this.persistUiStateSoon();
-		this.view?.webview.postMessage({
-			type: 'showChat',
-			messages: this.messages,
-			mode: this.mode,
-			plan: this.currentPlan,
-			title: this._currentTitle || 'Chat',
-			sessionId: this.activeSessionId,
-		});
-		this.sendAgentInfo();
-		this.sendConfig();
-		this.sendAvailableCommands();
-		this.sendPromptCapabilities();
-		this.sendColorTheme();
-		this.view?.webview.postMessage({ type: 'updateAgentRunning', running: this.agentRunning });
-		this.view?.webview.postMessage({ type: 'updateAutoAllowPermissions', value: this._autoAllowPermissions });
-		this.postDraftState();
-	}
-
-	public get activeSessionId(): string | null {
-		return this.acpClient?.sessionId ?? this._activeSessionIdOverride;
-	}
-
-	private restorePersistedUiState(): void {
-		const persisted = this.workspaceState.get<PersistedChatUiState>('exo.chatUiState');
-		if (persisted) {
-			this._viewMode = persisted.view;
-			this._currentTitle = persisted.sessionTitle;
-			this._activeSessionIdOverride = persisted.activeSessionId;
+		const runtime = this.session;
+		if (!runtime) {
+			return;
 		}
-		const draft = this.workspaceState.get<DraftState>('exo.chatDraft');
-		if (draft) {
-			this._draftState = {
-				text: draft.text ?? '',
-				attachedFiles: Array.isArray(draft.attachedFiles) ? draft.attachedFiles : [],
-			};
-		}
+		runtime.stopped = true;
+		runtime.acpClient.cancel();
+		runtime.isStreaming = false;
+		cancelAllPermissions(this.permissionContext(runtime));
+		this.sendTabs();
 	}
 
-	private persistUiStateSoon(): void {
-		if (this._persistUiTimer) {
-			clearTimeout(this._persistUiTimer);
-		}
-		this._persistUiTimer = setTimeout(() => {
-			this._persistUiTimer = null;
-			void this.workspaceState.update('exo.chatUiState', {
-				activeSessionId: this.activeSessionId,
-				view: this._viewMode,
-				sessionTitle: this._currentTitle,
-			} satisfies PersistedChatUiState);
-		}, 50);
-	}
-
-	private postDraftState(): void {
-		this.view?.webview.postMessage({
-			type: 'restoreDraft',
-			text: this._draftState.text,
-			attachedFiles: this._draftState.attachedFiles,
-		});
-	}
-
-	/** Context for the fs handlers. */
-	private fsContext(): FsHandlerContext {
+	/** Context for the fs handlers (per-runtime cwd + Files). */
+	private fsContext(runtime: SessionRuntime): FsHandlerContext {
 		return {
-			getWorkspaceRoot: () => this.getWorkspaceRoot(),
-			files: this.files,
-			toolCallInfos: this.toolCallInfos,
-			postUpdateMessages: () => {
-				this.updateMessages();
-			},
-			onToolCallCreated: (tc) => this.pushToolCallToStreaming(tc),
+			getWorkspaceRoot: () => runtime.cwd,
+			files: runtime.files,
+			toolCallInfos: runtime.toolCallInfos,
+			postUpdateMessages: () => this.updateMessages(),
+			onToolCallCreated: (tc) => runtime.pushToolCallToStreaming(tc),
 		};
 	}
 
-	/** Context for the permission handler (ACP session/request_permission). */
-	public permissionContext(): PermissionHandlerContext {
+	/** Context for the permission handler (per-runtime pendingPermissions + diff). */
+	public permissionContext(runtime: SessionRuntime): PermissionHandlerContext {
 		return {
-			toolCallInfos: this.toolCallInfos,
-			pendingPermissions: this.pendingPermissions,
+			toolCallInfos: runtime.toolCallInfos,
+			pendingPermissions: runtime.pendingPermissions,
 			autoAllow: () => this._autoAllowPermissions,
-			allocatePermissionRequestId: () => `perm-${++this._permissionRequestIdCounter}`,
+			allocatePermissionRequestId: () => runtime.allocatePermissionRequestId(),
 			postUpdateMessages: () => {
 				this.updateMessages();
+				this.sendTabs();
 			},
-			onToolCallCreated: (tc) => this.pushToolCallToStreaming(tc),
+			onToolCallCreated: (tc) => runtime.pushToolCallToStreaming(tc),
 			openEditDiff: (spec) => this.openEditDiff(spec),
 			closeDiff: (diffKey) => this.closeDiffTabs(diffKey),
 			readFileText: async (rawPath) => {
-				const abs = path.isAbsolute(rawPath) ? rawPath : path.resolve(this.getWorkspaceRoot(), rawPath);
+				const abs = path.isAbsolute(rawPath) ? rawPath : path.resolve(runtime.cwd, rawPath);
 				try {
 					const data = await vscode.workspace.fs.readFile(vscode.Uri.file(abs));
 					return Buffer.from(data).toString('utf8');
@@ -786,62 +977,6 @@ const { selectors, currentModeId } = buildConfigSelectors(
 				}
 			},
 		};
-	}
-
-	/** Apply the user's decision from the webview (postMessage `permissionDecision`). */
-	public resolvePermission(
-		requestId: string,
-		decision: { outcome: 'selected'; optionId: string } | { outcome: 'cancelled' },
-		followUpText?: string,
-	): void {
-		resolvePermissionImpl(this.permissionContext(), requestId, decision);
-		if (followUpText && followUpText.trim()) {
-			this._pendingFollowUpMessage = followUpText.trim();
-			this.messages.push({
-				role: 'user',
-				blocks: [{ type: 'text', content: followUpText.trim() }],
-				isQueued: true,
-			});
-		}
-		this.updateMessages();
-	}
-
-	/** Take and clear the pending follow-up message (called after the turn ends). */
-	public consumePendingFollowUp(): string | null {
-		const msg = this._pendingFollowUpMessage;
-		this._pendingFollowUpMessage = null;
-		return msg;
-	}
-
-	/** Current streaming assistant message (where chunks/tool calls are appended). */
-	public currentStreamingAssistant(): ChatMessage | undefined {
-		if (this.streamingIndex === null) {
-			return undefined;
-		}
-		const msg = this.messages[this.streamingIndex];
-		return msg && msg.role === 'assistant' && msg.isStreaming ? msg : undefined;
-	}
-
-	/**
-	 * Add a ToolCallInfo to the current streaming assistant. If there is no
-	 * streaming assistant (replay: tool_call arrives before agent_message_chunk),
-	 * one is auto-created.
-	 */
-	public pushToolCallToStreaming(tc: ToolCallInfo): void {
-		let assistant = this.currentStreamingAssistant();
-		if (!assistant) {
-			assistant = { role: 'assistant', blocks: [], isStreaming: true };
-			this.messages.push(assistant);
-			this.streamingIndex = this.messages.length - 1;
-		}
-		const lastBlock = assistant.blocks[assistant.blocks.length - 1];
-		if (lastBlock && lastBlock.type === 'activity') {
-			lastBlock.toolCalls.push(tc);
-		} else {
-			assistant.blocks.push({ type: 'activity', toolCalls: [tc], reasoning: '', reasoningPhases: 0 });
-		}
-		assistant._lastChunkKind = 'tool';
-		this._setReasoningActive(assistant, false);
 	}
 
 	/**
@@ -901,85 +1036,30 @@ const { selectors, currentModeId } = buildConfigSelectors(
 		})();
 	}
 
-	/** Append a text chunk to the current streaming assistant message. */
-	public appendStreamChunk(text: string): void {
-		const msg = this.currentStreamingAssistant();
-		if (!msg) {
-			return;
-		}
-		const lastBlock = msg.blocks[msg.blocks.length - 1];
-		if (lastBlock && lastBlock.type === 'text') {
-			lastBlock.content += text;
-		} else {
-			msg.blocks.push({ type: 'text', content: text });
-		}
-		msg._lastChunkKind = 'text';
-		this._setReasoningActive(msg, false);
-		this.streamThrottle?.update();
+	// ------------------------------------------------------------------
+	// Draft / persistence
+	// ------------------------------------------------------------------
+
+	public updateDraftState(text: string, attachedFiles: string[]): void {
+		this._draftState = { text, attachedFiles: [...attachedFiles] };
+		void this.workspaceState.update('exo.chatDraft', this._draftState);
 	}
 
-	/** Append a reasoning chunk (thought) to the current streaming assistant message. */
-	public appendThoughtChunk(text: string): void {
-		const msg = this.currentStreamingAssistant();
-		if (!msg) {
-			return;
-		}
-		const lastBlock = msg.blocks[msg.blocks.length - 1];
-		if (lastBlock && lastBlock.type === 'activity') {
-			if (msg._lastChunkKind === 'reasoning') {
-				lastBlock.reasoning += text;
-			} else {
-				lastBlock.reasoning = lastBlock.reasoning
-					? lastBlock.reasoning + '\n---\n' + text
-					: text;
-				lastBlock.reasoningPhases++;
-			}
-		} else {
-			msg.blocks.push({ type: 'activity', toolCalls: [], reasoning: text, reasoningPhases: 1 });
-		}
-		msg._lastChunkKind = 'reasoning';
-		this._setReasoningActive(msg, true);
-		this.streamThrottle?.update();
+	public showConfigRequired(): void {
+		this._activeSessionId = null;
+		this.view?.webview.postMessage({ type: 'showConfigRequired', configPath: getConfigPath() });
 	}
 
-	/**
-	 * Set reasoningActive on the last activity block of the message, clearing the
-	 * flag on all others (guard against stuck `true`). `value=false` clears everywhere.
-	 */
-	private _setReasoningActive(msg: ChatMessage | undefined, value: boolean): void {
-		if (!msg) {
-			return;
+	/** Full disconnect (extension deactivate / config change). Best-effort close + kill all. */
+	public disconnectAcp(): void {
+		for (const runtime of this.sessions.values()) {
+			try {
+				runtime.acpClient.disconnect();
+			} catch { /* ignore */ }
+			cancelAllPermissions(this.permissionContext(runtime));
+			runtime.endStreaming();
 		}
-		let lastActivityIdx = -1;
-		for (let i = 0; i < msg.blocks.length; i++) {
-			const b = msg.blocks[i];
-			if (b.type === 'activity') {
-				b.reasoningActive = false;
-				lastActivityIdx = i;
-			}
-		}
-		if (value && lastActivityIdx >= 0) {
-			const b = msg.blocks[lastActivityIdx];
-			if (b.type === 'activity') {
-				b.reasoningActive = true;
-			}
-		}
-	}
-
-	/** End streaming (flush + dispose throttle). */
-	public endStreaming(): void {
-		if (this.streamingIndex !== null) {
-			const msg = this.messages[this.streamingIndex];
-			if (msg) {
-				msg._lastChunkKind = null;
-				this._setReasoningActive(msg, false);
-			}
-		}
-		this.streamThrottle?.flush();
-		this.streamThrottle?.dispose();
-		this.streamThrottle = null;
-		this.streamingIndex = null;
-		this.isStreaming = false;
+		this.sessions.clear();
 	}
 
 	public getWorkspaceRoot(): string {
@@ -1007,6 +1087,101 @@ const { selectors, currentModeId } = buildConfigSelectors(
 			}
 		}
 		return { files, rejected };
+	}
+
+	// ------------------------------------------------------------------
+	// Persistence
+	// ------------------------------------------------------------------
+
+	private restorePersistedUiState(): void {
+		const persisted = this.workspaceState.get<PersistedChatUiState | {
+			activeSessionId?: string | null;
+			view?: 'list' | 'chat';
+			sessionTitle?: string;
+		}>('exo.chatUiState');
+		if (persisted) {
+			if (Array.isArray((persisted as PersistedChatUiState).tabs)) {
+				this._tabList = (persisted as PersistedChatUiState).tabs;
+				this._activeSessionId = (persisted as PersistedChatUiState).activeSessionId;
+			} else {
+				// Migrate legacy shape ({ activeSessionId, view, sessionTitle }).
+				const legacy = persisted as { activeSessionId?: string | null; sessionTitle?: string };
+				if (legacy.activeSessionId) {
+					this._tabList = [{
+						sessionId: legacy.activeSessionId,
+						title: legacy.sessionTitle ?? 'Chat',
+						cwd: this.getWorkspaceRoot(),
+					}];
+					this._activeSessionId = legacy.activeSessionId;
+				}
+			}
+		}
+		const draft = this.workspaceState.get<DraftState>('exo.chatDraft');
+		if (draft) {
+			this._draftState = {
+				text: draft.text ?? '',
+				attachedFiles: Array.isArray(draft.attachedFiles) ? draft.attachedFiles : [],
+			};
+		}
+		const registry = this.workspaceState.get<SessionRegistryEntry[]>('exo.sessionRegistry');
+		if (Array.isArray(registry)) {
+			this._sessionRegistry = new Map(registry.map((e) => [e.sessionId, e]));
+		}
+	}
+
+	private persistUiStateSoon(): void {
+		if (this._persistUiTimer) {
+			clearTimeout(this._persistUiTimer);
+		}
+		this._persistUiTimer = setTimeout(() => {
+			this._persistUiTimer = null;
+			void this.workspaceState.update('exo.chatUiState', {
+				tabs: this._tabList,
+				activeSessionId: this._activeSessionId,
+			} satisfies PersistedChatUiState);
+		}, 50);
+	}
+
+	private upsertSessionRegistry(
+		sessionId: string,
+		title: string,
+		cwd: string,
+		updatedAt?: number,
+	): void {
+		const prev = this._sessionRegistry.get(sessionId);
+		this._sessionRegistry.set(sessionId, {
+			sessionId,
+			title: title || prev?.title || 'Untitled',
+			updatedAt: updatedAt ?? prev?.updatedAt ?? Date.now(),
+			cwd,
+		});
+		this.persistRegistrySoon();
+	}
+
+	private persistRegistrySoon(): void {
+		this._persistRegistryDirty = true;
+		if (this._persistRegistryTimer) {
+			return;
+		}
+		this._persistRegistryTimer = setTimeout(() => {
+			this._persistRegistryTimer = null;
+			if (!this._persistRegistryDirty) {
+				return;
+			}
+			this._persistRegistryDirty = false;
+			void this.workspaceState.update(
+				'exo.sessionRegistry',
+				[...this._sessionRegistry.values()],
+			);
+		}, 200);
+	}
+
+	private postDraftState(): void {
+		this.view?.webview.postMessage({
+			type: 'restoreDraft',
+			text: this._draftState.text,
+			attachedFiles: this._draftState.attachedFiles,
+		});
 	}
 }
 

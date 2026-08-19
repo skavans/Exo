@@ -54,6 +54,12 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "exo.newSession",
+          "when": "false"
+        }
+      ],
       "view/title": [
         {
           "command": "exo.newSession",

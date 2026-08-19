@@ -50,6 +50,25 @@ export interface AcpSessionInfo {
 	updatedAt?: string | null;
 }
 
+/** Tab lifecycle status (host-side, from updateTabs). */
+export type TabStatus = 'idle' | 'running' | 'awaiting';
+
+/** One open session tab. */
+export interface TabInfo {
+	sessionId: string;
+	title: string;
+	status: TabStatus;
+}
+
+/** Recent-session item shown in the "+" dropdown. */
+export interface RecentSessionInfo {
+	sessionId: string;
+	title: string;
+	updatedAt: number;
+	/** True when the session currently has a live runtime (tab or lazy). */
+	active: boolean;
+}
+
 /** Activity block (the only block the ActivityBar renders). */
 export type ActivityBlock = Extract<MessageBlock, { type: 'activity' }>;
 

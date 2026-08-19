@@ -1,14 +1,14 @@
 import type { ChatViewProvider } from '../ChatViewProvider';
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import type { ContentBlock } from '@agentclientprotocol/sdk';
 import type { ChatMessage } from '../types';
 import { StreamThrottle } from '../StreamThrottle';
 
 /**
  * WebviewMessageHandler — thin handlers for the ACP client.
- * Sessions are managed by the agent (session/new|load|resume|close|delete) through ChatViewProvider.
- * handleUserMessage: text → ContentBlock[] → acpClient.prompt() → streaming via callbacks.
+ * All actions target the ACTIVE session runtime (see ChatViewProvider.session).
  */
 export class WebviewMessageHandler {
 	constructor(private provider: ChatViewProvider) {}
@@ -57,10 +57,17 @@ export class WebviewMessageHandler {
 				void this.provider.newSession();
 				break;
 			}
-			case 'openSession': {
+			case 'switchSession': {
 				const sessionId = message.sessionId as string;
 				if (sessionId) {
-					void this.provider.openSession(sessionId);
+					void this.provider.switchSession(sessionId);
+				}
+				break;
+			}
+			case 'closeTab': {
+				const sessionId = message.sessionId as string;
+				if (sessionId) {
+					void this.provider.closeTab(sessionId);
 				}
 				break;
 			}
@@ -69,10 +76,6 @@ export class WebviewMessageHandler {
 				if (sessionId) {
 					void this.provider.deleteSession(sessionId);
 				}
-				break;
-			}
-			case 'showSessionList': {
-				this.provider.showSessionList();
 				break;
 			}
 			case 'openConfig': {
@@ -105,7 +108,7 @@ export class WebviewMessageHandler {
 						try {
 							const absolutePath = path.isAbsolute(filePath)
 								? filePath
-								: path.resolve(this.provider.getWorkspaceRoot(), filePath);
+								: path.resolve(this.provider.cwd, filePath);
 							const doc = await vscode.workspace.openTextDocument(absolutePath);
 							await vscode.window.showTextDocument(doc, {
 								selection: line
@@ -143,7 +146,7 @@ export class WebviewMessageHandler {
 
 	/**
 	 * Main flow: text → ACP prompt → streamed response via callbacks.
-	 * The session must already be created/loaded (openSession/newSession). If not — create one.
+	 * Runs against the active session runtime; if none — creates one first.
 	 *
 	 * `opts.preQueued` — the message is already rendered as `isQueued` (reject follow-up):
 	 * don't push a new user message, just flip the flag on the existing one.
@@ -154,35 +157,28 @@ export class WebviewMessageHandler {
 		images?: Array<{ mimeType: string; data: string; name?: string }>,
 		opts?: { preQueued?: boolean },
 	): Promise<void> {
-		// Guarantee a connection + session
-		if (!this.provider.acpClient) {
-			try {
-				await this.provider.connectAcp(this.provider.getWorkspaceRoot());
-			} catch (err) {
-				const msg = err instanceof Error ? err.message : String(err);
-				this.pushAssistantError(`ACP connect failed: ${msg}`);
-				return;
-			}
-		}
-		if (!this.provider.acpClient!.sessionId) {
+		// Guarantee an active session runtime.
+		if (!this.provider.session) {
 			await this.provider.newSession();
 		}
-		if (!this.provider.acpClient || !this.provider.acpClient.sessionId) {
+		const runtime = this.provider.session;
+		if (!runtime || !runtime.acpClient.sessionId) {
 			this.pushAssistantError('No active session');
 			return;
 		}
+		const cwd = runtime.cwd;
 
 		// User message
 		if (opts?.preQueued) {
-			for (let i = this.provider.messages.length - 1; i >= 0; i--) {
-				const m = this.provider.messages[i];
+			for (let i = runtime.messages.length - 1; i >= 0; i--) {
+				const m = runtime.messages[i];
 				if (m.role === 'user' && m.isQueued) {
 					m.isQueued = false;
 					break;
 				}
 			}
 		} else {
-			this.provider.messages.push({
+			runtime.messages.push({
 				role: 'user',
 				blocks: [{ type: 'text', content: text }],
 				attachedFiles: attachedFiles && attachedFiles.length > 0 ? attachedFiles : undefined,
@@ -195,9 +191,8 @@ export class WebviewMessageHandler {
 		if (text) {
 			blocks.push({ type: 'text', text });
 		}
-		const workspaceRoot = this.provider.getWorkspaceRoot();
 		for (const relPath of attachedFiles ?? []) {
-			const abs = path.isAbsolute(relPath) ? relPath : path.resolve(workspaceRoot, relPath);
+			const abs = path.isAbsolute(relPath) ? relPath : path.resolve(cwd, relPath);
 			blocks.push({
 				type: 'resource_link',
 				uri: vscode.Uri.file(abs).toString(),
@@ -210,22 +205,28 @@ export class WebviewMessageHandler {
 
 		// Empty streaming assistant message
 		const assistantMsg: ChatMessage = { role: 'assistant', blocks: [], isStreaming: true };
-		this.provider.messages.push(assistantMsg);
+		runtime.messages.push(assistantMsg);
 		this.provider.updateMessages();
 
-		const idx = this.provider.messages.length - 1;
-		this.provider.streamingIndex = idx;
-		this.provider.streamThrottle = new StreamThrottle(this.provider, idx);
-		this.provider.toolCallInfos.clear();
-		this.provider.isStreaming = true;
-		this.provider.agentRunning = true;
-		this.provider.stopped = false;
+		const idx = runtime.messages.length - 1;
+		runtime.streamingIndex = idx;
+		runtime.streamThrottle = new StreamThrottle(
+			idx,
+			() => runtime.messages[idx],
+			(index, blocks) => runtime.callbacks.sendStreamChunk(index, blocks),
+			() => this.provider.updateMessages(),
+			() => runtime.callbacks.isActive(),
+		);
+		runtime.toolCallInfos.clear();
+		runtime.isStreaming = true;
+		runtime.agentRunning = true;
+		runtime.stopped = false;
+		this.provider.sendTabs();
 		this.provider.view?.webview.postMessage({ type: 'updateAgentRunning', running: true });
 
 		try {
-			const stopReason = await this.provider.acpClient.prompt(blocks);
+			const stopReason = await runtime.acpClient.prompt(blocks);
 			// ACP stopReason: end_turn | max_tokens | max_turn_requests | refusal | cancelled.
-			// cancelled = user-initiated, end_turn = normal. The rest are worth surfacing.
 			if (stopReason === 'refusal' || stopReason === 'max_tokens' || stopReason === 'max_turn_requests') {
 				const label = stopReason === 'refusal' ? 'Agent refused to continue'
 					: stopReason === 'max_tokens' ? 'Stopped: max tokens reached'
@@ -243,19 +244,17 @@ export class WebviewMessageHandler {
 				assistantMsg.blocks.push({ type: 'text', content: errText });
 			}
 		} finally {
-			const wasStopped = this.provider.stopped;
-			this.provider.endStreaming();
+			const wasStopped = runtime.stopped;
+			runtime.endStreaming();
 			assistantMsg.isStreaming = false;
 
-			// Follow-up (reject-with-response): the message is already rendered as `isQueued`.
-			// Consume it BEFORE clearing agentRunning to avoid lock/unlock flicker:
-			// the agent stays "running" and starts a new turn without the input blinking.
-			const followUp = !wasStopped ? this.provider.consumePendingFollowUp() : null;
+			const followUp = !wasStopped ? runtime.consumePendingFollowUp() : null;
 			if (!followUp) {
-				this.provider.agentRunning = false;
-				this.provider.stopped = false;
+				runtime.agentRunning = false;
+				runtime.stopped = false;
 				this.provider.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
 			}
+			this.provider.sendTabs();
 			this.provider.updateMessages();
 
 			if (followUp) {
@@ -265,7 +264,11 @@ export class WebviewMessageHandler {
 	}
 
 	private pushAssistantError(text: string): void {
-		this.provider.messages.push({
+		const runtime = this.provider.session;
+		if (!runtime) {
+			return;
+		}
+		runtime.messages.push({
 			role: 'assistant',
 			blocks: [{ type: 'text', content: text }],
 			isError: true,
@@ -273,15 +276,18 @@ export class WebviewMessageHandler {
 		this.provider.updateMessages();
 	}
 
+	/** Fzf-style server-side file search relative to the active session cwd. */
 	private async handleSearchFiles(query: string): Promise<void> {
-		const workspaceRoot = this.provider.getWorkspaceRoot();
-		const fileUris = await vscode.workspace.findFiles('**/*', undefined, 2000);
+		const cwd = this.provider.cwd;
 		const queryLower = query.toLowerCase();
 		const matches: Array<{ path: string; score: number }> = [];
-		for (const uri of fileUris) {
-			const relativePath = vscode.workspace.asRelativePath(uri, false);
-			if (relativePath.startsWith('.git/') || relativePath.includes('node_modules/')) continue;
-			const pathLower = relativePath.toLowerCase();
+
+		await this.walkFiles(cwd, cwd, (relPath, absPath) => {
+			const rel = relPath.replace(/\\/g, '/');
+			if (rel.startsWith('.git/') || rel.includes('/node_modules/') || rel.startsWith('.exo-worktrees/')) {
+				return;
+			}
+			const pathLower = rel.toLowerCase();
 			let score = 0;
 			let lastMatchIdx = -1;
 			let allCharsMatch = true;
@@ -297,15 +303,49 @@ export class WebviewMessageHandler {
 				}
 				lastMatchIdx = idx;
 			}
-			if (!allCharsMatch) continue;
-			const fileName = relativePath.split('/').pop()!;
+			if (!allCharsMatch) return;
+			const fileName = rel.split('/').pop()!;
 			if (fileName.toLowerCase().includes(queryLower)) score += 10;
-			score -= relativePath.length * 0.01;
-			matches.push({ path: relativePath, score });
-		}
+			score -= rel.length * 0.01;
+			matches.push({ path: rel, score });
+			void absPath;
+		});
+
 		matches.sort((a, b) => b.score - a.score);
 		const results = matches.slice(0, 20).map((m) => m.path);
 		this.provider.view?.webview.postMessage({ type: 'searchFilesResult', results });
+	}
+
+	/** Iterate files under `root`, calling cb(relativePath, absolutePath). Non-recursive-implementation, guarded. */
+	private async walkFiles(
+		root: string,
+		current: string,
+		cb: (rel: string, abs: string) => void,
+		depth = 0,
+		count = { n: 0 },
+	): Promise<void> {
+		if (depth > 8 || count.n >= 2000) {
+			return;
+		}
+		let entries: fs.Dirent[];
+		try {
+			entries = await fs.promises.readdir(current, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.exo-worktrees') {
+				continue;
+			}
+			const abs = path.join(current, entry.name);
+			const rel = path.relative(root, abs);
+			if (entry.isDirectory()) {
+				await this.walkFiles(root, abs, cb, depth + 1, count);
+			} else if (entry.isFile()) {
+				cb(rel, abs);
+				count.n++;
+			}
+		}
 	}
 
 	private async handleResolveFileLinks(requestId: string, rawPaths: unknown[]): Promise<void> {
@@ -338,7 +378,7 @@ export class WebviewMessageHandler {
 			for (const folder of workspaceFolders) {
 				candidates.add(path.resolve(folder.uri.fsPath, trimmed));
 			}
-			candidates.add(path.resolve(this.provider.getWorkspaceRoot(), trimmed));
+			candidates.add(path.resolve(this.provider.cwd, trimmed));
 		}
 
 		for (const candidate of candidates) {

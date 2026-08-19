@@ -41,7 +41,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('exo.newSession', () => {
-			chatProvider.handleNewSessionCommand();
+			chatProvider.openSessionPicker();
 		}),
 	);
 

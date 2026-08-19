@@ -12,96 +12,40 @@
 	flex-shrink: 0;
 }
 
-.back-btn {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	background: none;
-	border: none;
-	color: var(--ct-icon);
-	cursor: pointer;
-	padding: var(--ct-space-2xs);
-	border-radius: var(--ct-radius-xs);
-	transition: color var(--ct-transition-fast), background var(--ct-transition-fast);
+/* Tab header — the tab bar itself (active tab carries the session title). */
+.chat-header.tab-mode {
+	padding: var(--ct-space-xs) var(--ct-space-md);
+	gap: var(--ct-space-sm);
+}
+
+/* Context pill — compact token counter, tinted by context fill.
+   Colors are STATIC (not theme ANSI tokens — themes remap them). */
+.ctx-pill {
 	flex-shrink: 0;
-}
-
-.back-btn:hover {
-	color: var(--ct-text-primary);
-	background: var(--ct-bg-hover);
-}
-
-.chat-header-title {
-	flex: 1;
-	min-width: 0;
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	white-space: nowrap;
-}
-
-.chat-header-title-text {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	font-size: var(--ct-text-sm);
-	font-weight: 500;
-	color: var(--ct-text-primary);
-}
-
-.chat-header-agent {
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
-	flex-shrink: 0;
-	max-width: 50%;
-	font-size: 11px;
-	line-height: 1.2;
-	color: var(--ct-text-secondary);
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.chat-header-agent::before {
-	content: '';
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--ct-mode, var(--ct-icon));
-	flex-shrink: 0;
-	opacity: 0.9;
-}
-
-.chat-header-tokens {
-	flex-shrink: 0;
+	padding: 2px 8px;
+	border-radius: var(--ct-radius-pill);
 	font-size: var(--ct-text-xs);
 	font-family: var(--ct-font-mono);
-	color: var(--ct-text-secondary);
-	white-space: nowrap;
 	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	color: var(--ct-text-secondary);
+	background: color-mix(in srgb, var(--ct-text-secondary) 10%, transparent);
+	transition: background var(--ct-transition-smooth);
 }
 
-/* Context progress — thin bar along the header's bottom edge */
-.chat-header-bar {
-	position: absolute;
-	left: 0;
-	right: 0;
-	bottom: 0;
-	height: 2px;
-	pointer-events: none;
+.ctx-pill.green {
+	color: #2da44e;
+	background: color-mix(in srgb, #2da44e 16%, transparent);
 }
 
-.chat-header-bar-fill {
-	height: 100%;
-	background: var(--ct-accent);
-	transition: width 400ms ease, background 300ms ease;
+.ctx-pill.yellow {
+	color: #bf8700;
+	background: color-mix(in srgb, #bf8700 18%, transparent);
 }
 
-.chat-header-bar-fill.warning {
-	background: var(--ct-status-warning);
-}
-
-.chat-header-bar-fill.danger {
-	background: var(--ct-status-danger);
+.ctx-pill.red {
+	color: #cf222e;
+	background: color-mix(in srgb, #cf222e 16%, transparent);
 }

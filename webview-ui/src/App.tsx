@@ -1,32 +1,44 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'preact/hooks';
-import type { ChatMessage, Plan, AcpSessionInfo, ConfigState, MessageBlock, CommandInfo, AgentInfo, AttachedImage } from './types';
-import { formatCompactNumber, formatAgentLabel, useActiveModeColor } from './types';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'preact/hooks';
+import type { ChatMessage, Plan, MessageBlock, CommandInfo, AgentInfo, AttachedImage, TabInfo, RecentSessionInfo } from './types';
+import { formatAgentLabel, useActiveModeColor } from './types';
 import { vscode } from './vscode';
 import { MessageList } from './components/MessageList';
 import { MessageInput } from './components/MessageInput';
 import { TodoList } from './components/TodoList';
-import { SessionList } from './components/SessionList';
+import { TabBar } from './components/TabBar';
+import { SessionPicker } from './components/SessionPicker';
 import { ConfigRequired } from './components/ConfigRequired';
 import { resolveThemeId, setTheme, getThemeVersion, type ThemeKind } from './shiki';
-
-type ViewMode = 'list' | 'chat';
 
 function readThemeKind(): ThemeKind {
 	const kind = document.body.getAttribute('data-vscode-theme-kind') ?? '';
 	return kind === 'vscode-light' || kind === 'vscode-high-contrast-light' ? 'light' : 'dark';
 }
-function formatTokens(n: number): string {
-	return formatCompactNumber(n) + ' tok';
+/** Context pill color by fill: <50% green, ≤70% yellow, >70% red. */
+function ctxPillClass(used: number, limit: number | null): string {
+	if (!limit || limit <= 0) return '';
+	const ratio = used / limit;
+	if (ratio < 0.5) return 'green';
+	if (ratio <= 0.7) return 'yellow';
+	return 'red';
+}
+
+/** Token count, compact: 500 → "500", 200k → "200k", 1m → "1m". */
+function fmtTokens(n: number): string {
+	if (n < 1000) return `${n}`;
+	if (n < 1e6) return `${Math.round(n / 1000)}k`;
+	if (n < 1e9) return `${Math.round(n / 1e6)}m`;
+	return `${Math.round(n / 1e9)}b`;
 }
 
 export function App() {
-	const [view, setView] = useState<ViewMode>('list');
-	const [sessionList, setSessionList] = useState<AcpSessionInfo[] | null>(null);
+	const [tabs, setTabs] = useState<TabInfo[]>([]);
+	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+	const [recentSessions, setRecentSessions] = useState<RecentSessionInfo[]>([]);
+	const [menuOpen, setMenuOpen] = useState(false);
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [config, setConfig] = useState<ConfigState | null>(null);
 	const [plan, setPlan] = useState<Plan | null>(null);
-	const [sessionTitle, setSessionTitle] = useState<string>('');
-	const [sessionId, setSessionId] = useState<string | null>(null);
 	const [tokenUsage, setTokenUsage] = useState<{ prompt_tokens: number } | null>(null);
 	const [tokenLimit, setTokenLimit] = useState<number | null>(null);
 	const [isAgentRunning, setIsAgentRunning] = useState(false);
@@ -39,6 +51,10 @@ export function App() {
 	const [configRequired, setConfigRequired] = useState(false);
 	const [configPath, setConfigPath] = useState<string | null>(null);
 
+	// Guard against streamChunk for a session that isn't the active one.
+	const activeSessionIdRef = useRef(activeSessionId);
+	activeSessionIdRef.current = activeSessionId;
+
 	// Keep a ref to the latest theme name so applyTheme always reads a fresh
 	// value, never a stale closure (the host message and the MutationObserver
 	// fire independently and in unpredictable order on theme switch).
@@ -50,9 +66,9 @@ export function App() {
 		setThemeVersion(getThemeVersion());
 	}, []);
 
-    const handleSend = useCallback((text: string, attachedFiles?: string[], images?: AttachedImage[]) => {
-        vscode.postMessage({ type: 'sendMessage', text, attachedFiles, images });
-    }, []);
+	const handleSend = useCallback((text: string, attachedFiles?: string[], images?: AttachedImage[]) => {
+		vscode.postMessage({ type: 'sendMessage', text, attachedFiles, images });
+	}, []);
 
 	const handleSelectConfigOption = useCallback((configId: string, value: string) => {
 		vscode.postMessage({ type: 'selectConfigOption', configId, value });
@@ -66,20 +82,46 @@ export function App() {
 		vscode.postMessage({ type: 'toggleAutoAllowPermissions' });
 	}, []);
 
-	const handleBack = useCallback(() => {
-		vscode.postMessage({ type: 'showSessionList' });
+	const handleNew = useCallback(() => {
+		setMenuOpen(false);
+		vscode.postMessage({ type: 'newSession' });
+	}, []);
+
+	const handleSelectTab = useCallback((sessionId: string) => {
+		setMenuOpen(false);
+		if (sessionId !== activeSessionIdRef.current) {
+			vscode.postMessage({ type: 'switchSession', sessionId });
+		}
+	}, []);
+
+	const handleCloseTab = useCallback((sessionId: string) => {
+		setMenuOpen(false);
+		vscode.postMessage({ type: 'closeTab', sessionId });
+	}, []);
+
+	const handleOpenRecent = useCallback((sessionId: string) => {
+		setMenuOpen(false);
+		if (sessionId !== activeSessionIdRef.current) {
+			vscode.postMessage({ type: 'switchSession', sessionId });
+		}
+	}, []);
+
+	const handleDeleteRecent = useCallback((sessionId: string) => {
+		vscode.postMessage({ type: 'deleteSession', sessionId });
 	}, []);
 
 	useEffect(() => {
 		const handler = (event: MessageEvent) => {
 			const message = event.data;
-				switch (message.type) {
+			switch (message.type) {
 				case 'updateAgentInfo': {
 					setAgentInfo((message.agentInfo as AgentInfo | undefined) ?? null);
 					break;
 				}
 				case 'updateMessages':
-					setMessages(message.messages);
+					if (message.sessionId === undefined || message.sessionId === activeSessionIdRef.current) {
+						setMessages(message.messages);
+					}
 					break;
 				case 'updateConfig': {
 					setConfig(message as ConfigState);
@@ -105,35 +147,52 @@ export function App() {
 					}));
 					break;
 				}
-			case 'updateSessionList': {
-				setSessionList(message.sessions as AcpSessionInfo[]);
-				setView('list');
-				setConfigRequired(false);
-				break;
-			}
-			case 'showChat': {
-				setMessages(message.messages as ChatMessage[]);
-				setPlan(message.plan as Plan | null);
-				setSessionTitle(message.title as string);
-				setSessionId((message.sessionId as string | null) ?? null);
-				setTokenUsage(null);
-				setTokenLimit(null);
-				setView('chat');
-				setConfigRequired(false);
-				break;
-			}
-			case 'showSessionList': {
-				setView('list');
-				break;
-			}
-			case 'showConfigRequired': {
-				setConfigRequired(true);
-				setConfigPath(typeof message.configPath === 'string' ? message.configPath : null);
-				setView('list');
-				break;
-			}
-				case 'sessionTitleUpdate': {
-					setSessionTitle(message.title as string);
+				case 'updateTabs': {
+					setTabs((message.tabs as TabInfo[] | undefined) ?? []);
+					const active = (message.activeSessionId as string | null) ?? null;
+					activeSessionIdRef.current = active;
+					setActiveSessionId(active);
+					if (!active) {
+						setMessages([]);
+						setPlan(null);
+						setTokenUsage(null);
+						setTokenLimit(null);
+					}
+					break;
+				}
+				case 'updateSessions': {
+					setRecentSessions((message.sessions as RecentSessionInfo[] | undefined) ?? []);
+					break;
+				}
+				case 'showChat': {
+					const sid = (message.sessionId as string | null) ?? null;
+					activeSessionIdRef.current = sid;
+					setActiveSessionId(sid);
+					setMessages(message.messages as ChatMessage[]);
+					setPlan(message.plan as Plan | null);
+					setTokenUsage(null);
+					setTokenLimit(null);
+					setConfigRequired(false);
+					break;
+				}
+				case 'showEmpty': {
+					activeSessionIdRef.current = null;
+					setActiveSessionId(null);
+					setMessages([]);
+					setPlan(null);
+					setTokenUsage(null);
+					setTokenLimit(null);
+					setConfigRequired(false);
+					break;
+				}
+				case 'showSessionPicker': {
+					setMenuOpen(true);
+					break;
+				}
+				case 'showConfigRequired': {
+					setConfigRequired(true);
+					setConfigPath(typeof message.configPath === 'string' ? message.configPath : null);
+					setActiveSessionId(null);
 					break;
 				}
 				case 'updateTokenUsage': {
@@ -142,46 +201,48 @@ export function App() {
 					break;
 				}
 				case 'searchFilesResult': {
-					// Forward to MessageInput via custom event
-						window.dispatchEvent(new CustomEvent('exo-searchFilesResult', { detail: message.results }));
+					window.dispatchEvent(new CustomEvent('exo-searchFilesResult', { detail: message.results }));
 					break;
 				}
 				case 'resolveFileLinksResult': {
 					window.dispatchEvent(new CustomEvent('exo-resolveFileLinksResult', { detail: message }));
 					break;
 				}
-			case 'addDroppedFilesResult': {
+				case 'addDroppedFilesResult': {
 					window.dispatchEvent(new CustomEvent('exo-addDroppedFilesResult', { detail: { files: message.files, rejected: message.rejected } }));
 					break;
 				}
-			case 'updateAgentRunning': {
-				setIsAgentRunning(message.running as boolean);
-				break;
-			}
-		case 'updatePromptCapabilities': {
-			setPromptCapabilities({ image: Boolean(message.image) });
-			break;
-		}
-		case 'updateColorTheme': {
-			setColorThemeName((message.name as string | null) ?? null);
-			break;
-		}
-			case 'streamChunk': {
-				const idx = message.index as number;
-				const chunkBlocks = message.blocks as MessageBlock[] | undefined;
-				setMessages((prev) => {
-					if (idx < 0 || idx >= prev.length) { return prev; }
-					const msg = prev[idx];
-					if (!msg.isStreaming) { return prev; }
-					const next = prev.slice();
-					next[idx] = {
-						...msg,
-						blocks: chunkBlocks ?? msg.blocks,
-					};
-					return next;
-				});
-				break;
-			}
+				case 'updateAgentRunning': {
+					setIsAgentRunning(message.running as boolean);
+					break;
+				}
+				case 'updatePromptCapabilities': {
+					setPromptCapabilities({ image: Boolean(message.image) });
+					break;
+				}
+				case 'updateColorTheme': {
+					setColorThemeName((message.name as string | null) ?? null);
+					break;
+				}
+				case 'streamChunk': {
+					if (message.sessionId && message.sessionId !== activeSessionIdRef.current) {
+						break;
+					}
+					const idx = message.index as number;
+					const chunkBlocks = message.blocks as MessageBlock[] | undefined;
+					setMessages((prev) => {
+						if (idx < 0 || idx >= prev.length) { return prev; }
+						const msg = prev[idx];
+						if (!msg.isStreaming) { return prev; }
+						const next = prev.slice();
+						next[idx] = {
+							...msg,
+							blocks: chunkBlocks ?? msg.blocks,
+						};
+						return next;
+					});
+					break;
+				}
 			}
 		};
 		window.addEventListener('message', handler);
@@ -195,9 +256,7 @@ export function App() {
 
 	// Apply Shiki theme on startup and whenever the VS Code color-theme name
 	// (from the host) or the theme kind (from body[data-vscode-theme-kind])
-	// changes. Both events fire on a theme switch, in unpredictable order;
-	// applyTheme reads fresh values via refs so either one produces the
-	// correct result and bumps themeVersion to trigger a re-render.
+	// changes.
 	useEffect(() => {
 		applyTheme();
 		const observer = new MutationObserver(() => applyTheme());
@@ -207,10 +266,6 @@ export function App() {
 
 	if (configRequired) {
 		return <ConfigRequired configPath={configPath} />;
-	}
-
-	if (view === 'list') {
-		return <SessionList sessions={sessionList} agentInfo={agentInfo} />;
 	}
 
 	const activeModeColor = useActiveModeColor(config);
@@ -240,47 +295,66 @@ export function App() {
 
 	return (
 		<div class="chat-view" style={chatViewStyle}>
-			<div class="chat-header">
-				<button class="back-btn" onClick={handleBack} title="Back to sessions" aria-label="Back to sessions">
-					<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-						<path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-					</svg>
-				</button>
-				<div class="chat-header-title">
-					<span class="chat-header-title-text">{sessionTitle}</span>
-					{agentLabel && <span class="chat-header-agent" title={agentLabel}>{agentLabel}</span>}
-				</div>
+			<div class="chat-header tab-mode">
+				<TabBar
+					tabs={tabs}
+					activeSessionId={activeSessionId}
+					agentLabel={agentLabel || undefined}
+					onSelect={handleSelectTab}
+					onClose={handleCloseTab}
+				/>
 				{tokenUsage && (
-					<span class="chat-header-tokens">
+					<div
+						class={`ctx-pill ${ctxPillClass(tokenUsage.prompt_tokens, tokenLimit)}`}
+						title={tokenLimit
+							? `${Math.round((tokenUsage.prompt_tokens / tokenLimit) * 100)}% context used`
+							: `${tokenUsage.prompt_tokens} tokens used`}
+					>
 						{tokenLimit
-							? `${formatTokens(tokenUsage.prompt_tokens)} / ${formatTokens(tokenLimit)}`
-							: formatTokens(tokenUsage.prompt_tokens)
+							? `${fmtTokens(tokenUsage.prompt_tokens)}/${fmtTokens(tokenLimit)}`
+							: fmtTokens(tokenUsage.prompt_tokens)
 						}
-					</span>
-				)}
-				{tokenUsage && tokenLimit && (
-					<div class="chat-header-bar" title={`${Math.round((tokenUsage.prompt_tokens / tokenLimit) * 100)}% context used`}>
-						<div
-							class={`chat-header-bar-fill${tokenUsage.prompt_tokens / tokenLimit > 0.75 ? ' warning' : ''}${tokenUsage.prompt_tokens / tokenLimit > 0.9 ? ' danger' : ''}`}
-							style={{ width: `${Math.min(100, (tokenUsage.prompt_tokens / tokenLimit) * 100)}%` }}
-						/>
 					</div>
 				)}
 			</div>
-			<MessageList key={sessionId ?? 'empty'} messages={messages} themeVersion={themeVersion} />
-			{plan && <TodoList plan={plan} />}
-			<MessageInput
-				onSend={handleSend}
-				commands={commands}
-				config={config}
-				onSelectConfigOption={handleSelectConfigOption}
-				isAgentRunning={isAgentRunning}
-				autoAllowPermissions={autoAllowPermissions}
-				onToggleAutoAllowPermissions={handleToggleAutoAllowPermissions}
-				onStop={handleStop}
-				canPromptImage={promptCapabilities.image}
-				pendingReject={pendingReject}
-			/>
+			{activeSessionId ? (
+				<>
+					<MessageList key={activeSessionId} messages={messages} themeVersion={themeVersion} />
+					{plan && <TodoList plan={plan} />}
+					<MessageInput
+						onSend={handleSend}
+						commands={commands}
+						config={config}
+						onSelectConfigOption={handleSelectConfigOption}
+						isAgentRunning={isAgentRunning}
+						autoAllowPermissions={autoAllowPermissions}
+						onToggleAutoAllowPermissions={handleToggleAutoAllowPermissions}
+						onStop={handleStop}
+						canPromptImage={promptCapabilities.image}
+						pendingReject={pendingReject}
+					/>
+				</>
+			) : (
+				<div class="empty-state session-empty">
+					<div class="empty-state-icon">💬</div>
+					<div class="empty-state-text">No active session</div>
+					<div class="empty-state-hint">Click + to start a new chat</div>
+					<button class="empty-new-btn" onClick={handleNew}>New session</button>
+				</div>
+			)}
+			{menuOpen && (
+				<SessionPicker
+					sessions={recentSessions}
+					agentInfo={agentInfo}
+					onNew={handleNew}
+					onOpen={handleOpenRecent}
+					onDelete={handleDeleteRecent}
+					onClose={() => setMenuOpen(false)}
+				/>
+			)}
 		</div>
 	);
 }
+
+// Local import to keep the config-state typing in one place.
+type ConfigState = import('./types').ConfigState;
