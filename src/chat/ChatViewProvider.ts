@@ -11,7 +11,8 @@ import { StreamThrottle } from './StreamThrottle';
 import { AcpClient, type AcpClientCallbacks } from '../acp/AcpClient';
 import { buildConfigSelectors } from './configSelectors';
 import { handleReadTextFile, handleWriteTextFile, type FsHandlerContext } from '../acp/handlers/fs';
-import { applyToolCallPatch, extractPlanFromToolArgs, type EditSpec } from '../acp/handlers/util';
+import { extractPlanFromToolArgs } from '../vendor/opencode';
+import { applyToolCallPatch, type EditSpec } from '../acp/handlers/util';
 import {
 	handleRequestPermission,
 	resolvePermission as resolvePermissionImpl,
@@ -495,9 +496,10 @@ const { selectors, currentModeId } = buildConfigSelectors(
 	}
 
 	/**
-	 * Accommodation: if the tool-call carries a plan in args (opencode `{todos:[...]}`),
-	 * sync currentPlan. The standard ACP plan (onPlan) takes priority — it is called
-	 * directly. This only fires when args really look like a plan (shape detection).
+	 * Vendor fallback (opencode): if the tool-call carries a plan in args
+	 * (`{todos:[...]}`), sync currentPlan. The standard ACP plan (onPlan) takes
+	 * priority — it is called directly. This only fires when args really look
+	 * like a plan (shape detection). See src/vendor/opencode/plan.ts.
 	 */
 	private _maybeSyncPlanFromTool(tc: ToolCallInfo): void {
 		const entries = extractPlanFromToolArgs(tc.args);
@@ -774,6 +776,15 @@ const { selectors, currentModeId } = buildConfigSelectors(
 			onToolCallCreated: (tc) => this.pushToolCallToStreaming(tc),
 			openEditDiff: (spec) => this.openEditDiff(spec),
 			closeDiff: (diffKey) => this.closeDiffTabs(diffKey),
+			readFileText: async (rawPath) => {
+				const abs = path.isAbsolute(rawPath) ? rawPath : path.resolve(this.getWorkspaceRoot(), rawPath);
+				try {
+					const data = await vscode.workspace.fs.readFile(vscode.Uri.file(abs));
+					return Buffer.from(data).toString('utf8');
+				} catch {
+					return null;
+				}
+			},
 		};
 	}
 

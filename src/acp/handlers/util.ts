@@ -1,6 +1,6 @@
 /** Shared utilities for ACP handlers (fs/terminal/permission). */
 
-import type { PlanEntry, ToolCallUpdate } from '@agentclientprotocol/sdk';
+import type { ToolCallUpdate } from '@agentclientprotocol/sdk';
 import type { ToolCallInfo } from '../../chat/types';
 
 /**
@@ -81,30 +81,6 @@ export function extractDiffContent(content: unknown): { path: string; oldText?: 
 		}
 	}
 	return undefined;
-}
-
-/**
- * Accommodation for agents that don't use the standard ACP plan surface
- * (opencode): detect a plan by the tool-args shape `{todos:[{content,status,priority}]}`.
- * The format matches PlanEntry 1:1. Returns entries or null (if it doesn't look like a plan).
- */
-export function extractPlanFromToolArgs(args: unknown): PlanEntry[] | null {
-	if (!args || typeof args !== 'object') return null;
-	const todos = (args as Record<string, unknown>).todos;
-	if (!Array.isArray(todos) || todos.length === 0) return null;
-	const entries: PlanEntry[] = [];
-	for (const t of todos as Array<Record<string, unknown>>) {
-		if (!t || typeof t.content !== 'string') continue;
-		const status = t.status;
-		if (status !== 'pending' && status !== 'in_progress' && status !== 'completed') continue;
-		const priority = t.priority;
-		entries.push({
-			content: t.content,
-			status,
-			priority: priority === 'high' || priority === 'medium' || priority === 'low' ? priority : 'medium',
-		});
-	}
-	return entries.length > 0 ? entries : null;
 }
 
 /** Edit spec for the Diff Editor: only the standard ACP content-diff block. */

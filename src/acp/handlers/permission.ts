@@ -28,6 +28,7 @@ import type {
 	ToolCallInfo,
 } from '../../chat/types';
 import { applyToolCallPatch, extractEditSpec, type EditSpec, type ToolCallRegistryContext } from './util';
+import { isOpenCodeEditArgs, restoreOpenCodeEditSpec } from '../../vendor/opencode';
 
 /** Context provided by ChatViewProvider. */
 export interface PermissionHandlerContext extends ToolCallRegistryContext {
@@ -39,6 +40,8 @@ export interface PermissionHandlerContext extends ToolCallRegistryContext {
 	allocatePermissionRequestId: () => string;
 	/** For edit-permissions — open the VS Code Diff Editor. spec: standard ACP content-diff (original/proposed). Returns a diffKey for cleanup. */
 	openEditDiff?: (spec: EditSpec) => Promise<string | undefined>;
+	/** Read a file (absolute, or relative to workspace) — for the opencode diff-recovery fallback. Returns null when unreadable. */
+	readFileText?: (rawPath: string) => Promise<string | null>;
 	/** Close the Diff Editor by diffKey (on resolve/cancel). */
 	closeDiff?: (diffKey: string) => void;
 }
@@ -113,8 +116,18 @@ export async function handleRequestPermission(
 
 	// 5. For edit-permissions — open the VS Code Diff Editor.
 	//    Only the standard ACP content-diff block (type:'diff', path/oldText/newText) is used.
+	//    opencode (https://github.com/anomalyco/opencode/issues/37266) may omit that block for
+	//    edits inside indented blocks (trimDiff → applyPatch fails → no content). Fall back to
+	//    reconstructing the EditSpec from the tool's rawInput diff.
 	if (params.toolCall.kind === 'edit' && ctx.openEditDiff) {
-		const spec = extractEditSpec(tc.diffContent);
+		let spec = extractEditSpec(tc.diffContent);
+		if (!spec && ctx.readFileText && isOpenCodeEditArgs(tc.args)) {
+			try {
+				spec = await restoreOpenCodeEditSpec(tc.args, ctx.readFileText);
+			} catch (e) {
+				console.error('[Exo ACP] opencode edit-diff recovery failed:', e);
+			}
+		}
 		if (spec) {
 			try {
 				pending.diffKey = await ctx.openEditDiff(spec);
