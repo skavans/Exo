@@ -51,6 +51,7 @@ export function App() {
 	const [themeVersion, setThemeVersion] = useState(() => getThemeVersion());
 	const [configRequired, setConfigRequired] = useState(false);
 	const [configPath, setConfigPath] = useState<string | null>(null);
+	const [canMerge, setCanMerge] = useState(false);
 
 	// Guard against streamChunk for a session that isn't the active one.
 	const activeSessionIdRef = useRef(activeSessionId);
@@ -167,6 +168,7 @@ export function App() {
 						setTokenUsage(null);
 						setTokenLimit(null);
 						setChatLoading(null);
+						setCanMerge(false);
 					}
 					break;
 				}
@@ -182,6 +184,7 @@ export function App() {
 					setPlan(null);
 					setTokenUsage(null);
 					setTokenLimit(null);
+					setCanMerge(false);
 					setConfigRequired(false);
 					setChatLoading({
 						title: (message.title as string | undefined) ?? '',
@@ -197,6 +200,7 @@ export function App() {
 					setPlan(message.plan as Plan | null);
 					setTokenUsage(null);
 					setTokenLimit(null);
+					setCanMerge(false);
 					setConfigRequired(false);
 					setChatLoading(null);
 					break;
@@ -208,6 +212,7 @@ export function App() {
 					setPlan(null);
 					setTokenUsage(null);
 					setTokenLimit(null);
+					setCanMerge(false);
 					setConfigRequired(false);
 					setChatLoading(null);
 					break;
@@ -221,6 +226,7 @@ export function App() {
 					setConfigPath(typeof message.configPath === 'string' ? message.configPath : null);
 					setActiveSessionId(null);
 					setChatLoading(null);
+					setCanMerge(false);
 					break;
 				}
 				case 'updateTokenUsage': {
@@ -242,6 +248,10 @@ export function App() {
 				}
 				case 'updateAgentRunning': {
 					setIsAgentRunning(message.running as boolean);
+					break;
+				}
+				case 'updateMergeState': {
+					setCanMerge(Boolean(message.canMerge));
 					break;
 				}
 				case 'updatePromptCapabilities': {
@@ -368,6 +378,7 @@ export function App() {
 						onToggleAutoAllowPermissions={handleToggleAutoAllowPermissions}
 						onStop={handleStop}
 						canPromptImage={promptCapabilities.image}
+						canMerge={canMerge}
 						pendingReject={pendingReject}
 					/>
 				</>

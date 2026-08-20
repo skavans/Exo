@@ -34,10 +34,11 @@ interface Props {
 	onToggleAutoAllowPermissions: () => void;
 	onStop?: () => void;
 	canPromptImage: boolean;
+	canMerge?: boolean;
 	pendingReject?: { requestId: string; optionId: string } | null;
 }
 
-export function MessageInput({ onSend, commands, config, onSelectConfigOption, isAgentRunning, autoAllowPermissions, onToggleAutoAllowPermissions, onStop, canPromptImage, pendingReject }: Props) {
+export function MessageInput({ onSend, commands, config, onSelectConfigOption, isAgentRunning, autoAllowPermissions, onToggleAutoAllowPermissions, onStop, canPromptImage, canMerge, pendingReject }: Props) {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const [text, setText] = useState('');
 
@@ -273,6 +274,10 @@ export function MessageInput({ onSend, commands, config, onSelectConfigOption, i
 			extareaRef.current.style.height = 'auto';
 			extareaRef.current.focus({ preventScroll: true });
 		}
+	};
+
+	const handleMergeToMain = () => {
+		vscode.postMessage({ type: 'mergeToMain' });
 	};
 
 	const handleKeyDown = (e: KeyboardEvent) => {
@@ -547,7 +552,7 @@ export function MessageInput({ onSend, commands, config, onSelectConfigOption, i
 					})}
 				</div>
 			)}
-		<div class={`input-wrapper${pendingReject ? ' reject-mode' : ''}`}>
+		<div class={`input-wrapper${pendingReject ? ' reject-mode' : ''}${canMerge && !isAgentRunning && !pendingReject ? ' merge-visible' : ''}`}>
 			<textarea
 				id="message-input"
 				ref={textareaRef}
@@ -601,7 +606,18 @@ export function MessageInput({ onSend, commands, config, onSelectConfigOption, i
 					))}
 				</div>
 			)}
-				{pendingReject ? (
+			{canMerge && !isAgentRunning && !pendingReject && (
+				<button id="merge-pill" onClick={handleMergeToMain} title="Ask the agent to commit and merge into main" aria-label="Commit and merge changes into the main branch">
+					<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+						<path d="M4.5 2.5v5a3 3 0 0 0 3 3H12" />
+						<path d="M4.5 13.5v-1.5" />
+						<circle cx="4.5" cy="2.5" r="1.4" />
+						<circle cx="4.5" cy="13.5" r="1.4" />
+					</svg>
+					<span>merge</span>
+				</button>
+			)}
+			{pendingReject ? (
 					<button id="send-btn" class="reject-btn" onClick={handleSend} title="Reject (Enter)" aria-label="Reject with response">
 						<svg width="16" height="16" viewBox="0 0 16 16" fill="none">
 							<path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />

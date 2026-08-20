@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import type { ContentBlock } from '@agentclientprotocol/sdk';
 import type { ChatMessage } from '../types';
 import { StreamThrottle } from '../StreamThrottle';
+import { sessionHasUncommittedWork } from '../../worktree';
 
 /**
  * WebviewMessageHandler — thin handlers for the ACP client.
@@ -102,6 +103,10 @@ export class WebviewMessageHandler {
 				}
 				break;
 			}
+			case 'mergeToMain': {
+				this.provider.mergeToMain();
+				break;
+			}
 			case 'openFile': {
 				const { path: filePath, line, endLine } = message;
 				if (filePath) {
@@ -155,12 +160,14 @@ export class WebviewMessageHandler {
 	 * `opts.queuedMessage` — which queued message to flip (default: first
 	 * `isQueued` in history). `opts.runtime` — dispatch to a specific runtime
 	 * even if the user navigated away while it was still spawning.
+	 * `opts.mergeIntent` — this turn was triggered by the "commit & merge to
+	 * main" button; verify afterwards that the work actually landed on main.
 	 */
 	public async handleUserMessage(
 		text: string,
 		attachedFiles?: string[],
 		images?: Array<{ mimeType: string; data: string; name?: string }>,
-		opts?: { preQueued?: boolean; runtime?: SessionRuntime; queuedMessage?: ChatMessage },
+		opts?: { preQueued?: boolean; runtime?: SessionRuntime; queuedMessage?: ChatMessage; mergeIntent?: boolean },
 	): Promise<void> {
 		// Guarantee an active session runtime (capture it — the user may
 		// navigate away while the new session is still spawning).
@@ -288,6 +295,21 @@ export class WebviewMessageHandler {
 				runtime.stopped = false;
 				if (this.provider.activeSessionId === runtime.id) {
 					this.provider.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
+				}
+				// Turn ended — refresh the "commit & merge" button state.
+				this.provider.refreshMergeState();
+				// Merge-triggered turn: warn if work still didn't land on main.
+				if (opts?.mergeIntent && runtime.cwd !== this.provider.getWorkspaceRoot()) {
+					void sessionHasUncommittedWork(runtime.cwd).then(
+						(dirty) => {
+							if (dirty) {
+								vscode.window.showWarningMessage(
+									'Exo: changes were not merged into main — the session still has uncommitted work.',
+								);
+							}
+						},
+						() => { /* best-effort check */ },
+					);
 				}
 			}
 			this.provider.sendTabs();

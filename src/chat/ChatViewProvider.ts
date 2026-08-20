@@ -75,6 +75,12 @@ const DEFAULT_TITLE_PATTERN = /^(New session|Child session) - \d{4}-\d{2}-\d{2}T
 const TERMINAL_TITLE_MAX_LEN = 32;
 
 /**
+ * User-message sent by the "commit & merge to main" button. Kept terse — the
+ * agent generates the commit message itself, in the conversation's language.
+ */
+const COMMIT_AND_MERGE_PROMPT = 'Commit all your changes and merge them into the main branch.';
+
+/**
  * Terminal ANSI color keys, ordered exactly like `MODE_COLORS` in
  * `webview-ui/src/types.ts` — the two must stay in sync (separate bundles,
  * different value forms: ThemeColor strings here, CSS vars in the webview).
@@ -1127,6 +1133,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.view?.webview.postMessage({ type: 'updateAutoAllowPermissions', value: this._autoAllowPermissions });
 		this.sendTokenUsageFor(runtime.id);
 		this.postDraftState();
+		this.refreshMergeState();
 		this.sendTabs();
 		this.ensureSessionTerminal(runtime).show(false);
 		// Open deferred diff editors for pending edit-permissions.
@@ -1338,6 +1345,57 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		runtime.isStreaming = false;
 		cancelAllPermissions(this.permissionContext(runtime));
 		this.sendTabs();
+	}
+
+	// ------------------------------------------------------------------
+	// Commit & merge to main (worktree sessions)
+	// ------------------------------------------------------------------
+
+	/**
+	 * "Commit & merge to main" button: instruct the active agent (as a normal
+	 * user message) to commit its work and merge the worktree branch into main.
+	 * Host-side git is intentionally avoided — the agent picks the commit
+	 * message in the conversation's language. The button is gated on
+	 * `canMerge` (see `refreshMergeState`), so it only fires when there is
+	 * unmerged work.
+	 */
+	public mergeToMain(): void {
+		const runtime = this.session;
+		if (!runtime || runtime.agentRunning || runtime.isStreaming) {
+			return;
+		}
+		if (runtime.cwd === this.getWorkspaceRoot()) {
+			return;
+		}
+		void this._messageHandler.handleUserMessage(COMMIT_AND_MERGE_PROMPT, undefined, undefined, { mergeIntent: true });
+	}
+
+	/**
+	 * Recompute whether the active session has work to merge (worktree session
+	 * with uncommitted changes or commits absent from main) and push it to the
+	 * webview — drives the "commit & merge" button visibility. Called on
+	 * session show and whenever the agent goes idle (turn end).
+	 */
+	public refreshMergeState(): void {
+		const runtime = this.session;
+		const cwd = runtime?.cwd;
+		if (!runtime || !cwd || cwd === this.getWorkspaceRoot()) {
+			this.view?.webview.postMessage({ type: 'updateMergeState', canMerge: false });
+			return;
+		}
+		void sessionHasUncommittedWork(cwd).then(
+			(canMerge) => {
+				// Only apply if this runtime is still the active session.
+				if (this._activeSessionId === runtime.id) {
+					this.view?.webview.postMessage({ type: 'updateMergeState', canMerge });
+				}
+			},
+			() => {
+				if (this._activeSessionId === runtime.id) {
+					this.view?.webview.postMessage({ type: 'updateMergeState', canMerge: false });
+				}
+			},
+		);
 	}
 
 	/** Context for the fs handlers (per-runtime cwd + Files). */

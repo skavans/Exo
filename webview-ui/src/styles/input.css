@@ -364,6 +364,43 @@
 	color: var(--ct-text-primary);
 }
 
+/* Commit & merge to main — pill left of the send button */
+#merge-pill {
+	position: absolute;
+	bottom: 8px;
+	right: 36px;
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ct-space-2xs);
+	height: 24px;
+	box-sizing: border-box;
+	padding: 0 var(--ct-space-xs);
+	border: 1px solid color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 45%, transparent);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 10%, transparent);
+	color: var(--ct-mode, var(--ct-accent));
+	font-size: var(--ct-text-xs);
+	font-weight: 600;
+	line-height: 1;
+	cursor: pointer;
+	transition: background var(--ct-transition-fast), color var(--ct-transition-fast), border-color var(--ct-transition-fast);
+}
+
+#merge-pill:hover {
+	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 18%, transparent);
+	border-color: var(--ct-mode, var(--ct-accent));
+	color: var(--ct-text-primary);
+}
+
+#merge-pill svg {
+	flex-shrink: 0;
+}
+
+/* Make room for the merge pill so typed text never runs under it */
+.input-wrapper.merge-visible #message-input {
+	padding-right: 112px;
+}
+
 /* Stop button — replaces send button during agent loop */
 #stop-btn {
 	position: absolute;
