@@ -50,6 +50,8 @@ export interface PendingPermission {
 	resolve: (response: RequestPermissionResponse) => void;
 	/** If the Diff Editor was opened for this permission (edit) — the cleanup key. */
 	diffKey?: string;
+	/** Deferred edit spec for non-active sessions (opened on tab switch). */
+	editSpec?: { filePath: string; original?: string; proposed?: string };
 }
 
 

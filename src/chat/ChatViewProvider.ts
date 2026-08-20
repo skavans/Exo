@@ -544,6 +544,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			cancelled: false,
 		};
 		this._pendingSessions.set(pending.id, pending);
+		// Close diff editors for the previous session.
+		if (this._activeSessionId && this._activeSessionId !== pending.id) {
+			const prev = this.sessions.get(this._activeSessionId);
+			if (prev) {
+				this.closeSessionDiffs(prev);
+			}
+		}
 		this._activeSessionId = pending.id;
 		this.sendTabs();
 		this.view?.webview.postMessage({
@@ -975,6 +982,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	// ------------------------------------------------------------------
 
 	public showEmpty(): void {
+		// Close diff editors for the previous session.
+		if (this._activeSessionId) {
+			const prev = this.sessions.get(this._activeSessionId);
+			if (prev) {
+				this.closeSessionDiffs(prev);
+			}
+		}
 		this._activeSessionId = null;
 		this.persistUiStateSoon();
 		this.view?.webview.postMessage({ type: 'showEmpty' });
@@ -983,6 +997,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/** Show a runtime's chat in the webview. */
 	private showSessionRuntime(runtime: SessionRuntime): void {
+		// Close diff editors for the previous session before switching.
+		if (this._activeSessionId && this._activeSessionId !== runtime.id) {
+			const prev = this.sessions.get(this._activeSessionId);
+			if (prev) {
+				this.closeSessionDiffs(prev);
+			}
+		}
 		this._activeSessionId = runtime.id;
 		this.persistUiStateSoon();
 		this.view?.webview.postMessage({
@@ -1002,6 +1023,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.postDraftState();
 		this.sendTabs();
 		this.ensureSessionTerminal(runtime).show(false);
+		// Open deferred diff editors for pending edit-permissions.
+		void this.openDeferredDiffs(runtime);
 	}
 
 	public updateMessages(): void {
@@ -1225,9 +1248,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			toolCallInfos: runtime.toolCallInfos,
 			pendingPermissions: runtime.pendingPermissions,
 			autoAllow: () => this._autoAllowPermissions,
+			isActive: () => this._activeSessionId === runtime.id,
 			allocatePermissionRequestId: () => runtime.allocatePermissionRequestId(),
 			postUpdateMessages: () => {
-				this.updateMessages();
+				if (this._activeSessionId === runtime.id) {
+					this.updateMessages();
+				}
 				this.sendTabs();
 			},
 			onToolCallCreated: (tc) => runtime.pushToolCallToStreaming(tc),
@@ -1300,6 +1326,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				console.error('[Exo ACP] closeDiffTabs error:', err);
 			}
 		})();
+	}
+
+	/** Close all open Diff Editors for a runtime's pending permissions. Clears diffKey. */
+	public closeSessionDiffs(runtime: SessionRuntime): void {
+		for (const pending of runtime.pendingPermissions.values()) {
+			if (pending.diffKey) {
+				this.closeDiffTabs(pending.diffKey);
+				pending.diffKey = undefined;
+			}
+		}
+	}
+
+	/** Open deferred Diff Editors for a runtime's pending permissions that have editSpec but no diffKey. */
+	public async openDeferredDiffs(runtime: SessionRuntime): Promise<void> {
+		for (const pending of runtime.pendingPermissions.values()) {
+			if (pending.editSpec && !pending.diffKey) {
+				try {
+					pending.diffKey = await this.openEditDiff(pending.editSpec);
+				} catch (e) {
+					console.error('[Exo ACP] openDeferredDiff failed:', e);
+				}
+			}
+		}
 	}
 
 	// ------------------------------------------------------------------

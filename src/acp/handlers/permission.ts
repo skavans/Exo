@@ -36,6 +36,8 @@ export interface PermissionHandlerContext extends ToolCallRegistryContext {
 	pendingPermissions: Map<string, PendingPermission>;
 	/** Temporary override: auto-approve permission requests without a UI card. */
 	autoAllow: () => boolean;
+	/** Whether the runtime that owns this permission is the currently active session. */
+	isActive: () => boolean;
 	/** Request-id generator (unique within a session). */
 	allocatePermissionRequestId: () => string;
 	/** For edit-permissions — open the VS Code Diff Editor. spec: standard ACP content-diff (original/proposed). Returns a diffKey for cleanup. */
@@ -114,7 +116,7 @@ export async function handleRequestPermission(
 		pending.resolve = resolve;
 	});
 
-	// 5. For edit-permissions — open the VS Code Diff Editor.
+	// 5. For edit-permissions — open the VS Code Diff Editor (or defer for non-active sessions).
 	//    Only the standard ACP content-diff block (type:'diff', path/oldText/newText) is used.
 	//    opencode (https://github.com/anomalyco/opencode/issues/37266) may omit that block for
 	//    edits inside indented blocks (trimDiff → applyPatch fails → no content). Fall back to
@@ -129,10 +131,14 @@ export async function handleRequestPermission(
 			}
 		}
 		if (spec) {
-			try {
-				pending.diffKey = await ctx.openEditDiff(spec);
-			} catch (e) {
-				console.error('[Exo ACP] openEditDiff failed:', e);
+			if (ctx.isActive()) {
+				try {
+					pending.diffKey = await ctx.openEditDiff(spec);
+				} catch (e) {
+					console.error('[Exo ACP] openEditDiff failed:', e);
+				}
+			} else {
+				pending.editSpec = spec;
 			}
 		}
 	}
