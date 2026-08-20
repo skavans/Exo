@@ -1295,7 +1295,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			this.view?.webview.postMessage({ type: 'updateConfig', selectors: [], modeColorIndex: {} });
 			return;
 		}
-		const { selectors, currentModeId } = buildConfigSelectors(client.configOptions ?? null);
+		const { selectors, currentModeId } = buildConfigSelectors(client.configOptions ?? null, client.clientSelection);
 		if (currentModeId && this.session) {
 			this.session.mode = currentModeId;
 		}
@@ -1326,7 +1326,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			if (agentId) {
 				// Mode switch → pull the (model, effort) last used with this mode
 				// (from any session). Best-effort; invalid values are skipped.
-				const { selectors } = buildConfigSelectors(client.configOptions ?? null);
+				const { selectors } = buildConfigSelectors(client.configOptions ?? null, client.clientSelection);
 				const modeSel = selectors.find((s) => s.category === 'mode');
 				if (modeSel && modeSel.id === configId) {
 					await this.applyRememberedSetup(agentId, modeSel.currentValue);
@@ -1347,7 +1347,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		if (!client) {
 			return;
 		}
-		const { selectors } = buildConfigSelectors(client.configOptions ?? null);
+		const { selectors } = buildConfigSelectors(client.configOptions ?? null, client.clientSelection);
 		const modeSel = selectors.find((s) => s.category === 'mode');
 		if (!modeSel) {
 			return;
@@ -1381,7 +1381,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				continue;
 			}
 			// Re-read options each iteration — setConfigOption returns fresh ones.
-			const sel = buildConfigSelectors(client.configOptions ?? null).selectors.find((s) => s.category === category);
+			const sel = buildConfigSelectors(client.configOptions ?? null, client.clientSelection).selectors.find((s) => s.category === category);
 			if (!sel || !sel.options.some((o) => o.value === value)) {
 				continue;
 			}
