@@ -184,6 +184,7 @@ export class WebviewMessageHandler {
 				attachedFiles: attachedFiles && attachedFiles.length > 0 ? attachedFiles : undefined,
 				images: images && images.length > 0 ? images.map((i) => ({ mimeType: i.mimeType, data: i.data, name: i.name })) : undefined,
 			});
+			this.provider.ensureSessionTitle(runtime, text);
 		}
 		this.provider.updateMessages();
 

@@ -41,6 +41,15 @@ interface SessionRegistryEntry {
 
 const MAX_RECENT_SESSIONS = 10;
 
+/** Poll interval for discovering the agent-generated session title via `session/list`. */
+const TITLE_POLL_INTERVAL_MS = 5000;
+/** Give up discovering a real title after this long (agent may not title sessions). */
+const TITLE_POLL_MAX_MS = 60000;
+/** Client-side fallback title: first message line, clamped. */
+const FALLBACK_TITLE_MAX_LEN = 48;
+/** Default agent titles (e.g. opencode's) — not real, don't read them back. */
+const DEFAULT_TITLE_PATTERN = /^(New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
 /**
  * ChatViewProvider — registry of parallel session runtimes.
  *
@@ -329,6 +338,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			try {
 				runtime.acpClient.disconnect();
 			} catch { /* ignore */ }
+			this.stopTitlePolling(runtime);
 			cancelAllPermissions(this.permissionContext(runtime));
 			this.sessions.delete(sessionId);
 		}
@@ -362,6 +372,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 					}
 				} finally {
 					try { runtime.acpClient.disconnect(); } catch { /* ignore */ }
+					this.stopTitlePolling(runtime);
 					this.sessions.delete(sessionId);
 				}
 			} else if (cwd) {
@@ -630,21 +641,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			},
 			onSessionInfoUpdate: (title, updatedAt) => {
 				if (title) {
-					runtime.title = title;
-					const t = this._tabList.find((x) => x.sessionId === sessionId);
-					if (t) t.title = title;
-					this.upsertSessionRegistry(
-						sessionId,
-						title,
-						runtime.cwd,
-						updatedAt ? new Date(updatedAt).getTime() : undefined,
-					);
-					if (this._activeSessionId === sessionId) {
-						this.view?.webview.postMessage({ type: 'sessionTitleUpdate', sessionId, title });
+					this.applySessionTitle(sessionId, title, updatedAt ? new Date(updatedAt).getTime() : undefined);
+					if (!isPlaceholderTitle(title)) {
+						this.stopTitlePolling(runtime);
 					}
-					this.persistUiStateSoon();
-					this.sendTabs();
-					this.sendSessionList();
 				}
 			},
 			onReadTextFile: (p) => handleReadTextFile(p, this.fsContext(runtime)),
@@ -652,6 +652,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			onRequestPermission: (p) => handleRequestPermission(p, this.permissionContext(runtime)),
 			onError: (e) => console.error('[Exo ACP] error:', e),
 			onDisconnect: () => {
+				this.stopTitlePolling(runtime);
 				cancelAllPermissions(this.permissionContext(runtime));
 				runtime.isStreaming = false;
 				runtime.agentRunning = false;
@@ -664,6 +665,86 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				this.sendTabs();
 			},
 		};
+	}
+
+	// ------------------------------------------------------------------
+	// Session titles
+	// ------------------------------------------------------------------
+
+	/**
+	 * Persist an owned session title through the whole pipeline (runtime, tab
+	 * list, registry) and refresh the UI. Used by `session_info_update`, the
+	 * `session/list` poller and the client-side fallback title alike.
+	 */
+	private applySessionTitle(sessionId: string, title: string, updatedAt?: number): void {
+		const runtime = this.sessions.get(sessionId);
+		if (!runtime) {
+			return;
+		}
+		runtime.title = title;
+		const t = this._tabList.find((x) => x.sessionId === sessionId);
+		if (t) {
+			t.title = title;
+		}
+		this.upsertSessionRegistry(sessionId, title, runtime.cwd, updatedAt);
+		this.persistUiStateSoon();
+		this.sendTabs();
+		this.sendSessionList();
+	}
+
+	/**
+	 * On the first real user message: if the session still carries a generic
+	 * title, show a client-side fallback (start of the message) and start
+	 * polling `session/list` so a real agent-generated title can replace it.
+	 */
+	public ensureSessionTitle(runtime: SessionRuntime, messageText: string): void {
+		if (runtime.titlePollStarted || this.sessions.get(runtime.id) !== runtime) {
+			return;
+		}
+		const fallback = isPlaceholderTitle(runtime.title) ? makeFallbackTitle(messageText) : '';
+		if (fallback) {
+			this.applySessionTitle(runtime.id, fallback);
+		}
+		if (runtime.acpClient.canList) {
+			this.startTitlePolling(runtime);
+		}
+	}
+
+	/** Poll `session/list` every 5s (max 1 min) until a real title appears. */
+	private startTitlePolling(runtime: SessionRuntime): void {
+		if (runtime.titlePollTimer || !runtime.acpClient.canList) {
+			return;
+		}
+		runtime.titlePollStarted = true;
+		runtime.titlePollStart = Date.now();
+		const tick = () => {
+			if (Date.now() - runtime.titlePollStart >= TITLE_POLL_MAX_MS) {
+				this.stopTitlePolling(runtime);
+				return;
+			}
+			void this.pollTitleTick(runtime).catch((err) => {
+				console.error('[Exo ACP] title poll failed (giving up):', err);
+				this.stopTitlePolling(runtime);
+			});
+		};
+		runtime.titlePollTimer = setInterval(tick, TITLE_POLL_INTERVAL_MS);
+		tick();
+	}
+
+	private async pollTitleTick(runtime: SessionRuntime): Promise<void> {
+		const resp = await runtime.acpClient.listSessions(runtime.cwd);
+		const entry = resp.sessions.find((s) => s.sessionId === runtime.id);
+		if (entry?.title && !isPlaceholderTitle(entry.title) && entry.title !== runtime.title) {
+			this.applySessionTitle(runtime.id, entry.title, entry.updatedAt ? new Date(entry.updatedAt).getTime() : undefined);
+			this.stopTitlePolling(runtime);
+		}
+	}
+
+	private stopTitlePolling(runtime: SessionRuntime): void {
+		if (runtime.titlePollTimer) {
+			clearInterval(runtime.titlePollTimer);
+			runtime.titlePollTimer = null;
+		}
 	}
 
 	// ------------------------------------------------------------------
@@ -732,7 +813,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			sessionId: runtime.id,
 			messages: runtime.messages,
 			plan: runtime.currentPlan,
-			title: runtime.title || 'Chat',
 		});
 		this.sendAgentInfo();
 		this.sendConfig();
@@ -1056,6 +1136,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			try {
 				runtime.acpClient.disconnect();
 			} catch { /* ignore */ }
+			this.stopTitlePolling(runtime);
 			cancelAllPermissions(this.permissionContext(runtime));
 			runtime.endStreaming();
 		}
@@ -1199,4 +1280,20 @@ function mapToolStatus(s: string | null | undefined): ToolCallInfo['status'] {
 		default:
 			return 'pending';
 	}
+}
+
+/** Our own placeholder titles (incl. empty and agent defaults) — never real. */
+function isPlaceholderTitle(title: string): boolean {
+	return !title || title === 'New Chat' || title === 'Chat' || title === 'Untitled' || DEFAULT_TITLE_PATTERN.test(title);
+}
+
+/** Client-side fallback tab title: first non-empty line of the message, clamped. */
+function makeFallbackTitle(text: string): string {
+	const line = text.split(/\r?\n/, 1)[0]?.trim() ?? '';
+	if (!line) {
+		return '';
+	}
+	return line.length > FALLBACK_TITLE_MAX_LEN
+		? `${line.slice(0, FALLBACK_TITLE_MAX_LEN - 1).trimEnd()}…`
+		: line;
 }

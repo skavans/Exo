@@ -79,6 +79,11 @@ export class SessionRuntime {
 	lastReplayMsgId: string | null = null;
 	replayUpdateTimer: ReturnType<typeof setTimeout> | null = null;
 
+	// --- Title discovery (session/list polling) ---
+	titlePollStarted = false;
+	titlePollStart = 0;
+	titlePollTimer: ReturnType<typeof setInterval> | null = null;
+
 	constructor(id: string, cwd: string, callbacks: SessionRuntimeCallbacks) {
 		this.id = id;
 		this.cwd = cwd;
