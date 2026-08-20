@@ -143,26 +143,43 @@
 	opacity: 0.9;
 }
 
-.session-status.session-status-running {
+/* ---------- session number badge (replaces the status dot for open sessions) ---------- */
+
+.session-number {
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	border-radius: var(--ct-radius-pill);
+	font-family: var(--ct-font-mono);
+	font-size: 9px;
+	font-weight: 700;
+	line-height: 1;
+	font-variant-numeric: tabular-nums;
+	color: var(--dot-color, var(--ct-icon));
+	background: color-mix(in srgb, var(--dot-color, var(--ct-icon)) 14%, transparent);
+	border: 1px solid color-mix(in srgb, var(--dot-color, var(--ct-icon)) 45%, transparent);
+	opacity: 0.85;
+}
+
+.session-number.session-status-running {
 	animation: session-dot-pulse 1.1s ease-in-out infinite;
 }
 
-.session-status.session-status-awaiting {
-	background: var(--ct-status-warning);
+.session-number.session-status-awaiting {
+	color: var(--ct-status-warning);
+	background: color-mix(in srgb, var(--ct-status-warning) 16%, transparent);
+	border-color: var(--ct-status-warning);
 	opacity: 1;
 	animation: session-dot-pulse 1.4s ease-in-out infinite;
 }
 
-.session-status.session-status-loading {
-	background: transparent;
-	border: 1.5px solid color-mix(in srgb, var(--ct-text-secondary) 30%, transparent);
-	border-top-color: var(--ct-text-secondary);
-	opacity: 1;
-	animation: session-status-spin 0.9s linear infinite;
-}
-
-@keyframes session-status-spin {
-	to { transform: rotate(360deg); }
+.session-number.session-status-loading {
+	opacity: 0.45;
+	border-style: dashed;
 }
 
 @keyframes session-dot-pulse {

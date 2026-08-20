@@ -52,6 +52,9 @@ export class SessionRuntime {
 	/** Display title (agent-owned, from session_info_update). */
 	title = '';
 
+	/** Ordinal session number — matches the terminal label `exo: #N` and the header badge. */
+	number = 0;
+
 	// --- Messages / tool calls ---
 	messages: ChatMessage[] = [];
 	toolCallInfos = new Map<string, ToolCallInfo>();
