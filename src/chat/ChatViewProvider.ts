@@ -22,7 +22,7 @@ import { StreamThrottle } from './StreamThrottle';
 import type { AvailableCommand, PlanEntry } from '@agentclientprotocol/sdk';
 
 interface PersistedChatUiState {
-	tabs: Array<{ sessionId: string; title: string; cwd: string }>;
+	tabs: Array<{ sessionId: string; title: string; cwd: string; number: number }>;
 	activeSessionId: string | null;
 }
 
@@ -61,6 +61,8 @@ interface PendingSession {
 	id: string;
 	title: string;
 	mode: 'new' | 'load';
+	/** Ordinal session number — already assigned at pending time, carried to the runtime. */
+	number: number;
 	/** Session to restore the active view to if this pending operation fails. */
 	prevActiveId: string | null;
 	/** Set when the user closes the pending tab — resolve/fail become no-ops. */
@@ -83,9 +85,6 @@ const TITLE_POLL_MAX_MS = 300000;
 const FALLBACK_TITLE_MAX_LEN = 48;
 /** Default agent titles (e.g. opencode's) — not real, don't read them back. */
 const DEFAULT_TITLE_PATTERN = /^(New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-
-/** Per-session terminal label cap. */
-const TERMINAL_TITLE_MAX_LEN = 32;
 
 /**
  * User-message sent by the "commit & merge to main" button. Kept terse — the
@@ -111,21 +110,15 @@ const SESSION_COLOR_KEYS = [
 	'terminal.ansiBrightCyan',
 ];
 
-/** Deterministic per-session color index 0..9 (djb2 over the agent-owned session id). */
-function sessionColorIndex(sessionId: string): number {
-	let h = 5381;
-	for (let i = 0; i < sessionId.length; i++) {
-		h = ((h << 5) + h + sessionId.charCodeAt(i)) | 0;
-	}
-	return (h >>> 0) % SESSION_COLOR_KEYS.length;
+/** Per-session color index 0..9, derived from the ordinal number so the header
+ *  badge and the terminal tab always share the same color. */
+function sessionColorNumber(number: number): number {
+	return Math.max(0, number - 1) % SESSION_COLOR_KEYS.length;
 }
 
-/** Terminal label: `exo: {title}` clamped to TERMINAL_TITLE_MAX_LEN. */
-function formatTerminalName(title: string): string {
-	const t = (title || 'session').replace(/\s+/g, ' ').trim();
-	return t.length > TERMINAL_TITLE_MAX_LEN
-		? `exo: ${t.slice(0, TERMINAL_TITLE_MAX_LEN - 4)}…`
-		: `exo: ${t}`;
+/** Terminal label: `exo: #N` — the session's ordinal number (matches the header badge). */
+function formatTerminalName(number: number): string {
+	return `exo: #${number}`;
 }
 
 /**
@@ -150,7 +143,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private _activeSessionId: string | null = null;
 
 	/** Open tabs (persistent). Order matters (left→right). */
-	private _tabList: Array<{ sessionId: string; title: string; cwd: string }> = [];
+	private _tabList: Array<{ sessionId: string; title: string; cwd: string; number: number }> = [];
+
+	/** Next ordinal session number to hand out (monotonic; resets when no tabs are open). */
+	private _nextSessionNumber = 1;
 
 	/** Recent-sessions registry (persistent) — drives the "+" menu. */
 	private _sessionRegistry = new Map<string, SessionRegistryEntry>();
@@ -396,6 +392,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			console.error('[Exo] worktree creation failed, using shared root:', err);
 		}
 		try {
+			// Create the terminal NOW (before the agent spawn — the slow part),
+			// so it never pops up while the user is already typing; the chat
+			// view and input autofocus come after it.
+			this.createPendingTerminal(pending, cwd);
+			this.postPendingView(pending);
 			const runtime = await this.spawnSession('', cwd, 'new');
 			this.resolvePendingSession(pending, runtime, 'New Chat');
 			return runtime;
@@ -419,14 +420,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 		// Lazy spawn: recreate the agent process and reload the session.
-		const meta = this._tabList.find((t) => t.sessionId === sessionId)
+		const tab = this._tabList.find((t) => t.sessionId === sessionId);
+		const meta = tab
 			?? { sessionId, title: this._sessionRegistry.get(sessionId)?.title ?? 'Chat', cwd: this._sessionRegistry.get(sessionId)?.cwd };
 		const cwd = meta.cwd ?? this.getWorkspaceRoot();
-		const pending = this.addPendingSession('load', meta.title, this._activeSessionId ?? undefined);
+		const pending = this.addPendingSession('load', meta.title, this._activeSessionId ?? undefined, tab?.number);
 		if (cwd !== this.getWorkspaceRoot()) {
 			void registerWorktreeInScm(cwd);
 		}
 		try {
+			this.createPendingTerminal(pending, cwd);
+			this.postPendingView(pending);
 			const runtime = await this.spawnSession(sessionId, cwd, 'load');
 			this.resolvePendingSession(pending, runtime, meta.title);
 		} catch (err) {
@@ -455,6 +459,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 		// Optimistic: remove the tab from the UI immediately.
 		this._tabList = this._tabList.filter((t) => t.sessionId !== sessionId);
+		if (this._tabList.length === 0) {
+			this._nextSessionNumber = 1;
+		}
 		this.persistUiStateSoon();
 		this.sendTabs();
 		if (this._activeSessionId === sessionId) {
@@ -520,6 +527,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 		// Optimistic: remove from tabs/registry immediately.
 		this._tabList = this._tabList.filter((t) => t.sessionId !== sessionId);
+		if (this._tabList.length === 0) {
+			this._nextSessionNumber = 1;
+		}
 		this._sessionRegistry.delete(sessionId);
 		this._drafts.delete(sessionId);
 		this.persistDrafts();
@@ -617,11 +627,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	 * are queued; `load` sessions keep the full-area loading view (content
 	 * comes from agent replay, nothing to interact with).
 	 */
-	private addPendingSession(mode: 'new' | 'load', title: string, prevActiveId?: string): PendingSession {
+	private addPendingSession(mode: 'new' | 'load', title: string, prevActiveId?: string, number?: number): PendingSession {
 		const pending: PendingSession = {
 			id: `pending-${++this._pendingCounter}`,
 			title,
 			mode,
+			number: number ?? this._nextSessionNumber++,
 			prevActiveId: prevActiveId ?? null,
 			cancelled: false,
 			queuedMessages: [],
@@ -636,7 +647,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this._activeSessionId = pending.id;
 		this.sendTabs();
-		this.postPendingView(pending);
 		return pending;
 	}
 
@@ -657,12 +667,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private resolvePendingSession(pending: PendingSession, runtime: SessionRuntime, title: string): void {
 		this._pendingSessions.delete(pending.id);
 		if (pending.cancelled) {
-			// Tab was closed while loading — don't leak the spawned agent.
+			// Tab was closed while loading — don't leak the spawned agent or the terminal.
+			this.disposeSessionTerminal(pending.id);
 			try {
 				runtime.acpClient.disconnect();
 			} catch { /* ignore */ }
 			return;
 		}
+		// Adopt the number + terminal created during the pending phase.
+		runtime.number = pending.number;
+		this.transferSessionTerminal(pending.id, runtime.id);
 		// Optimistic `new`: messages typed during the spawn become the start of
 		// the real session, still rendered `isQueued` until dispatched below.
 		if (pending.queuedMessages.length > 0) {
@@ -696,6 +710,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private failPendingSession(pending: PendingSession): void {
 		this._pendingSessions.delete(pending.id);
 		this._drafts.delete(pending.id);
+		this.disposeSessionTerminal(pending.id);
 		if (pending.cancelled) {
 			return;
 		}
@@ -753,7 +768,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.sessions.set(runtime.id, runtime);
 		runtime.title = title;
 		if (!this._tabList.some((t) => t.sessionId === runtime.id)) {
-			this._tabList.push({ sessionId: runtime.id, title, cwd: runtime.cwd });
+			this._tabList.push({ sessionId: runtime.id, title, cwd: runtime.cwd, number: runtime.number });
 		}
 		this.upsertSessionRegistry(runtime.id, title, runtime.cwd);
 		this.persistUiStateSoon();
@@ -766,22 +781,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	/**
-	 * Get (or create) the terminal rooted in a runtime's cwd (worktree). Created
+	 * Create a terminal named `exo: #N` rooted in `cwd` (worktree). Created
 	 * hidden and transient: it only surfaces when the user is in the terminal
 	 * panel, and is never resurrected after a VS Code restart.
 	 */
+	private createSessionTerminal(number: number, cwd: string): vscode.Terminal {
+		return vscode.window.createTerminal({
+			name: formatTerminalName(number),
+			cwd,
+			iconPath: new vscode.ThemeIcon('git-branch'),
+			color: new vscode.ThemeColor(SESSION_COLOR_KEYS[sessionColorNumber(number)]),
+			isTransient: true,
+		});
+	}
+
+	/** Create the pending-phase terminal BEFORE the agent spawn (so it never
+	 *  pops up mid-typing); keyed by the pending id until the runtime resolves. */
+	private createPendingTerminal(pending: PendingSession, cwd: string): vscode.Terminal {
+		const existing = this._sessionTerminals.get(pending.id);
+		if (existing) {
+			return existing;
+		}
+		const terminal = this.createSessionTerminal(pending.number, cwd);
+		this._sessionTerminals.set(pending.id, terminal);
+		return terminal;
+	}
+
+	/** Re-key a pending-phase terminal onto the resolved runtime's id. */
+	private transferSessionTerminal(fromId: string, toId: string): void {
+		const terminal = this._sessionTerminals.get(fromId);
+		if (!terminal) {
+			return;
+		}
+		this._sessionTerminals.delete(fromId);
+		this._sessionTerminals.set(toId, terminal);
+	}
+
+	/** Get the runtime's terminal (usually created during the pending phase). */
 	private ensureSessionTerminal(runtime: SessionRuntime): vscode.Terminal {
 		const existing = this._sessionTerminals.get(runtime.id);
 		if (existing) {
 			return existing;
 		}
-		const terminal = vscode.window.createTerminal({
-			name: formatTerminalName(runtime.title),
-			cwd: runtime.cwd,
-			iconPath: new vscode.ThemeIcon('git-branch'),
-			color: new vscode.ThemeColor(SESSION_COLOR_KEYS[sessionColorIndex(runtime.id)]),
-			isTransient: true,
-		});
+		const terminal = this.createSessionTerminal(runtime.number, runtime.cwd);
 		this._sessionTerminals.set(runtime.id, terminal);
 		return terminal;
 	}
@@ -796,20 +838,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		try {
 			terminal.dispose();
 		} catch { /* ignore */ }
-	}
-
-	/** Re-label a session's terminal when a real title arrives (all 3 title sources). */
-	private renameSessionTerminal(sessionId: string, title: string): void {
-		const terminal = this._sessionTerminals.get(sessionId);
-		if (!terminal) {
-			return;
-		}
-		const name = formatTerminalName(title);
-		if (terminal.name !== name) {
-			try {
-				terminal.name = name;
-			} catch { /* Terminal.name is readonly in some VS Code versions — keep the creation name. */ }
-		}
 	}
 
 	private buildRuntimeCallbacks(getId: () => string): SessionRuntimeCallbacks {
@@ -1007,7 +1035,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this.upsertSessionRegistry(sessionId, title, runtime.cwd, updatedAt);
 		this.persistUiStateSoon();
-		this.renameSessionTerminal(sessionId, title);
 		this.sendTabs();
 		this.sendSessionList();
 	}
@@ -1163,7 +1190,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.postDraftState();
 		this.refreshMergeState();
 		this.sendTabs();
-		this.ensureSessionTerminal(runtime).show(false);
+		// Bring the session's terminal forward WITHOUT stealing focus from the
+		// chat input (`show(true)` preserves focus; `false` would yank it).
+		this.ensureSessionTerminal(runtime).show(true);
 		// Open deferred diff editors for pending edit-permissions.
 		void this.openDeferredDiffs(runtime);
 	}
@@ -1178,7 +1207,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			sessionId: p.id,
 			title: p.title,
 			status: 'loading' as const,
-			colorIndex: sessionColorIndex(p.id),
+			number: p.number,
+			colorIndex: sessionColorNumber(p.number),
 		}));
 		const tabs = [
 			...this._tabList.map((t) => {
@@ -1187,7 +1217,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 					sessionId: t.sessionId,
 					title: runtime?.title || t.title,
 					status: runtime ? runtime.status : 'idle',
-					colorIndex: sessionColorIndex(t.sessionId),
+					number: t.number,
+					colorIndex: sessionColorNumber(t.number),
 				};
 			}),
 			...pendingTabs,
@@ -1687,7 +1718,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}>('exo.chatUiState');
 		if (persisted) {
 			if (Array.isArray((persisted as PersistedChatUiState).tabs)) {
-				this._tabList = (persisted as PersistedChatUiState).tabs;
+				// Restore per-session numbers (older state without them gets fresh ones).
+				let next = 1;
+				this._tabList = ((persisted as PersistedChatUiState).tabs as Array<{
+					sessionId: string;
+					title: string;
+					cwd: string;
+					number?: number;
+				}>).map((t) => ({
+					sessionId: t.sessionId,
+					title: t.title,
+					cwd: t.cwd,
+					number: typeof t.number === 'number' && t.number > 0 ? t.number : next++,
+				}));
 				this._activeSessionId = (persisted as PersistedChatUiState).activeSessionId;
 			} else {
 				// Migrate legacy shape ({ activeSessionId, view, sessionTitle }).
@@ -1697,11 +1740,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 						sessionId: legacy.activeSessionId,
 						title: legacy.sessionTitle ?? 'Chat',
 						cwd: this.getWorkspaceRoot(),
+						number: 1,
 					}];
 					this._activeSessionId = legacy.activeSessionId;
 				}
 			}
 		}
+		const maxNumber = this._tabList.reduce((m, t) => Math.max(m, t.number), 0);
+		this._nextSessionNumber = maxNumber + 1;
 		const draft = this.workspaceState.get<DraftState | Record<string, DraftState>>('exo.chatDraft');
 		if (draft) {
 			if (Array.isArray(draft.attachedFiles) || typeof draft.text === 'string') {

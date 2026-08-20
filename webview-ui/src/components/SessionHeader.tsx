@@ -39,6 +39,7 @@ interface MergedSession {
 	isOpen: boolean;
 	status: 'idle' | 'running' | 'awaiting' | 'loading' | 'closed';
 	colorIndex: number;
+	number?: number;
 	updatedAt?: number;
 }
 
@@ -74,6 +75,7 @@ export function SessionHeader({
 			isOpen: true,
 			status: t.status,
 			colorIndex: t.colorIndex,
+			number: t.number,
 		})),
 		...(recentSessions ?? [])
 			.filter((s) => !openIds.has(s.sessionId))
@@ -133,10 +135,12 @@ export function SessionHeader({
 					title={agentLabel ? `${activeTab.title} — ${agentLabel}` : activeTab.title}
 				>
 					<span
-					class={`session-status session-status-${activeTab.status}`}
-					style={{ '--dot-color': MODE_COLORS[activeTab.colorIndex % MODE_COLORS.length] } as preact.JSX.CSSProperties}
-					aria-hidden="true"
-				/>
+						class={`session-number session-status-${activeTab.status}`}
+						style={{ '--dot-color': MODE_COLORS[activeTab.colorIndex % MODE_COLORS.length] } as preact.JSX.CSSProperties}
+						aria-hidden="true"
+					>
+						{activeTab.number}
+					</span>
 					<div class="session-current-text">
 						<span class="session-current-title">{activeTab.title}</span>
 						{agentLabel && <span class="session-current-agent">{agentLabel}</span>}
@@ -183,11 +187,21 @@ export function SessionHeader({
 										}
 										title={`${tooltip}${statusLabel}`}
 									>
-										<span
-											class={`session-status ${dotClass}${!s.isOpen ? ' on' : ''}`}
-											style={dotStyle}
-											aria-hidden="true"
-										/>
+										{s.isOpen && s.number != null ? (
+											<span
+												class={`session-number ${dotClass}`}
+												style={dotStyle}
+												aria-hidden="true"
+											>
+												{s.number}
+											</span>
+										) : (
+											<span
+												class={`session-status ${dotClass} on`}
+												style={dotStyle}
+												aria-hidden="true"
+											/>
+										)}
 										<span class="session-menu-title">{s.title}</span>
 										{s.updatedAt != null && (
 											<span class="session-menu-time">{formatRelativeTime(s.updatedAt)}</span>
