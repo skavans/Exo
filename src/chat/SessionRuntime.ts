@@ -62,7 +62,8 @@ export class SessionRuntime {
 	isStreaming = false;
 	agentRunning = false;
 	stopped = false;
-	pendingFollowUpMessage: string | null = null;
+	/** Queued user message to dispatch as the next turn (reject-follow-up or optimistic-queued). */
+	pendingFollowUpMessage: ChatMessage | null = null;
 
 	// --- Permission flow ---
 	pendingPermissions = new Map<string, PendingPermission>();
@@ -216,8 +217,8 @@ export class SessionRuntime {
 		this.isStreaming = false;
 	}
 
-	/** Take and clear the pending follow-up message (called after the turn ends). */
-	consumePendingFollowUp(): string | null {
+	/** Take and clear the queued follow-up message (called after the turn ends). */
+	consumePendingFollowUp(): ChatMessage | null {
 		const msg = this.pendingFollowUpMessage;
 		this.pendingFollowUpMessage = null;
 		return msg;

@@ -52,6 +52,12 @@ interface PendingSession {
 	prevActiveId: string | null;
 	/** Set when the user closes the pending tab — resolve/fail become no-ops. */
 	cancelled: boolean;
+	/**
+	 * Messages typed while the `new` session is still spawning. Rendered
+	 * optimistically as `isQueued` and dispatched once the runtime exists.
+	 * Only ever populated for `mode === 'new'`.
+	 */
+	queuedMessages: ChatMessage[];
 }
 
 const MAX_RECENT_SESSIONS = 10;
@@ -224,7 +230,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	get messages(): ChatMessage[] {
-		return this.session?.messages ?? [];
+		const runtime = this.session;
+		if (runtime) {
+			return runtime.messages;
+		}
+		return this.activePendingNewSession?.queuedMessages ?? [];
+	}
+
+	/** The active session when it's an in-flight `new` op (optimistic input target). */
+	get activePendingNewSession(): PendingSession | null {
+		const id = this._activeSessionId;
+		if (!id) {
+			return null;
+		}
+		const pending = this._pendingSessions.get(id);
+		return pending && pending.mode === 'new' ? pending : null;
 	}
 
 	get streamingIndex(): number | null {
@@ -567,8 +587,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	// --- Pending (in-flight create/load) sessions ---
 
 	/**
-	 * Start an in-flight session op: show a loading tab + loading view
-	 * immediately, resolve it when the real runtime exists.
+	 * Start an in-flight session op: show a loading tab + the pending view
+	 * immediately, resolve it when the real runtime exists. `new` sessions are
+	 * optimistic — an empty chat + input is shown and messages typed meanwhile
+	 * are queued; `load` sessions keep the full-area loading view (content
+	 * comes from agent replay, nothing to interact with).
 	 */
 	private addPendingSession(mode: 'new' | 'load', title: string, prevActiveId?: string): PendingSession {
 		const pending: PendingSession = {
@@ -577,6 +600,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			mode,
 			prevActiveId: prevActiveId ?? null,
 			cancelled: false,
+			queuedMessages: [],
 		};
 		this._pendingSessions.set(pending.id, pending);
 		// Close diff editors for the previous session.
@@ -588,13 +612,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this._activeSessionId = pending.id;
 		this.sendTabs();
-		this.view?.webview.postMessage({
-			type: 'showChatLoading',
-			sessionId: pending.id,
-			title,
-			mode,
-		});
+		this.postPendingView(pending);
 		return pending;
+	}
+
+	/** Render the pending session in the webview (chat view for `new`, loading view for `load`). */
+	private postPendingView(pending: PendingSession): void {
+		if (pending.mode === 'new') {
+			this.view?.webview.postMessage({ type: 'showChat', sessionId: pending.id, messages: this.messages, plan: null });
+			// Never let a stale `agentRunning` from the previous session disable the input.
+			this.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
+		} else {
+			this.view?.webview.postMessage({ type: 'showChatLoading', sessionId: pending.id, title: pending.title, mode: 'load' });
+		}
 	}
 
 	/** Swap a pending loading tab for the real runtime (or dispose if cancelled). */
@@ -607,8 +637,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			} catch { /* ignore */ }
 			return;
 		}
+		// Optimistic `new`: messages typed during the spawn become the start of
+		// the real session, still rendered `isQueued` until dispatched below.
+		if (pending.queuedMessages.length > 0) {
+			runtime.messages = [...pending.queuedMessages];
+			pending.queuedMessages = [];
+		}
 		// Only steal the view if the user hasn't navigated away meanwhile.
 		this.finishSessionOpen(runtime, title, this._activeSessionId === pending.id);
+		if (runtime.messages.some((m) => m.isQueued)) {
+			const first = runtime.messages.find((m) => m.isQueued);
+			if (first) {
+				const text = messageText(first);
+				this.ensureSessionTitle(runtime, text);
+				void this._messageHandler.handleUserMessage(text, first.attachedFiles, first.images, {
+					preQueued: true,
+					runtime,
+					queuedMessage: first,
+				});
+			}
+		}
 	}
 
 	/** A pending op failed: restore the previous active view (or show empty). */
@@ -623,15 +671,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			this.showSessionRuntime(prevRuntime);
 		} else if (prev && this._pendingSessions.has(prev)) {
 			// The previous "active" was another in-flight op — show it instead.
+			const prevPending = this._pendingSessions.get(prev)!;
 			this._activeSessionId = prev;
 			this.persistUiStateSoon();
 			this.sendTabs();
-			this.view?.webview.postMessage({
-				type: 'showChatLoading',
-				sessionId: prev,
-				title: this._pendingSessions.get(prev)?.title ?? '',
-				mode: this._pendingSessions.get(prev)?.mode ?? 'load',
-			});
+			this.postPendingView(prevPending);
 		} else {
 			this.showEmpty();
 		}
@@ -1272,12 +1316,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		resolvePermissionImpl(this.permissionContext(runtime), requestId, decision);
 		if (followUpText && followUpText.trim()) {
-			runtime.pendingFollowUpMessage = followUpText.trim();
-			runtime.messages.push({
+			const queued: ChatMessage = {
 				role: 'user',
 				blocks: [{ type: 'text', content: followUpText.trim() }],
 				isQueued: true,
-			});
+			};
+			runtime.pendingFollowUpMessage = queued;
+			runtime.messages.push(queued);
 		}
 		this.updateMessages();
 		this.sendTabs();
@@ -1590,6 +1635,12 @@ function mapToolStatus(s: string | null | undefined): ToolCallInfo['status'] {
 		default:
 			return 'pending';
 	}
+}
+
+/** First text block's content of a user message ("" when none). */
+function messageText(msg: ChatMessage): string {
+	const block = msg.blocks.find((b) => b.type === 'text');
+	return block && block.type === 'text' ? block.content : '';
 }
 
 /** Our own placeholder titles (incl. empty and agent defaults) — never real. */
