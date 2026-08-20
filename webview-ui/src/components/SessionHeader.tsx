@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { MODE_COLORS } from '../types';
 import type { RecentSessionInfo, TabInfo } from '../types';
 
 interface Props {
@@ -103,7 +104,11 @@ export function SessionHeader({
 					class="session-current"
 					title={agentLabel ? `${activeTab.title} — ${agentLabel}` : activeTab.title}
 				>
-					<span class={`session-status session-status-${activeTab.status}`} aria-hidden="true" />
+					<span
+					class={`session-status session-status-${activeTab.status}`}
+					style={{ '--dot-color': MODE_COLORS[activeTab.colorIndex % MODE_COLORS.length] } as preact.JSX.CSSProperties}
+					aria-hidden="true"
+				/>
 					<div class="session-current-text">
 						<span class="session-current-title">{activeTab.title}</span>
 						{agentLabel && <span class="session-current-agent">{agentLabel}</span>}
@@ -139,7 +144,11 @@ export function SessionHeader({
 														: tooltip
 										}
 									>
-										<span class={`session-status session-status-${tab.status}`} aria-hidden="true" />
+										<span
+										class={`session-status session-status-${tab.status}`}
+										style={{ '--dot-color': MODE_COLORS[tab.colorIndex % MODE_COLORS.length] } as preact.JSX.CSSProperties}
+										aria-hidden="true"
+									/>
 										<span class="session-menu-title">{tab.title}</span>
 										<button
 											class="session-menu-close"

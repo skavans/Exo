@@ -58,6 +58,8 @@ export interface TabInfo {
 	sessionId: string;
 	title: string;
 	status: TabStatus;
+	/** Per-session color index 0..9 (host-computed, maps to MODE_COLORS). */
+	colorIndex: number;
 }
 
 /** In-flight session create/load — shown as a loading view until showChat arrives. */
