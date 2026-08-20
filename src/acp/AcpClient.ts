@@ -78,6 +78,12 @@ export class AcpClient {
 	private _sessionId: string | null = null;
 	private _configOptions: SessionConfigOption[] | null | undefined = null;
 	private _availableCommands: AvailableCommand[] | null = null;
+	/**
+	 * Client-owned config selections (configId → value). Written only by our own
+	 * `setConfigOption`; agent-pushed `config_option_update` notifications never
+	 * touch it, so the dropdown selection survives agent re-broadcasts.
+	 */
+	private _clientSelection: Record<string, string> = {};
 
 	/** Agent capabilities (from initialize) */
 	get agentCapabilities(): AgentCapabilities | undefined {
@@ -134,6 +140,11 @@ export class AcpClient {
 	/** Current config options */
 	get configOptions(): SessionConfigOption[] | null | undefined {
 		return this._configOptions;
+	}
+
+	/** Client-owned config selections (see `_clientSelection`). */
+	get clientSelection(): Record<string, string> {
+		return this._clientSelection;
 	}
 
 	/** Connection established (process + connection alive) */
@@ -360,6 +371,7 @@ export class AcpClient {
 			},
 		);
 		this._configOptions = result.configOptions ?? null;
+		this._clientSelection[configId] = value;
 		return result.configOptions ?? [];
 	}
 
@@ -399,6 +411,7 @@ export class AcpClient {
 		this._sessionId = null;
 		this._configOptions = null;
 		this._availableCommands = null;
+		this._clientSelection = {};
 	}
 
 	// --- Internal ---
@@ -488,6 +501,7 @@ export class AcpClient {
 		this._initializeResult = null;
 		this._configOptions = null;
 		this._availableCommands = null;
+		this._clientSelection = {};
 		this._callbacks.onDisconnect();
 	}
 }

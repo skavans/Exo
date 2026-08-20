@@ -67,22 +67,28 @@ function firstSelectByCategory(
 }
 
 /** Build the UI selector list. Order: mode (always first, if present),
- *  then model, then thought_level — as they appear in configOptions. */
+ *  then model, then thought_level — as they appear in configOptions.
+ *  `clientSelection` (configId → value, client-owned) overrides the
+ *  agent-reported `currentValue` per selector — agent pushes refresh the option
+ *  lists but never flip a selection the client has committed. */
 export function buildConfigSelectors(
 	configOptions: SessionConfigOption[] | null | undefined,
+	clientSelection?: Record<string, string> | null,
 ): ConfigBuildResult {
 	const selectors: ConfigSelectorWire[] = [];
 	let currentModeId: string | null = null;
+	const selected = (id: string, currentValue: string): string =>
+		clientSelection?.[id] ?? currentValue;
 
 	// 1. Mode: configOptions category 'mode'.
 	const modeOpt = firstSelectByCategory(configOptions, 'mode');
 	if (modeOpt) {
-		currentModeId = modeOpt.currentValue;
+		currentModeId = selected(modeOpt.id, modeOpt.currentValue);
 		selectors.push({
 			id: modeOpt.id,
 			label: modeOpt.name,
 			category: 'mode',
-			currentValue: modeOpt.currentValue,
+			currentValue: currentModeId,
 			options: flatten(modeOpt.options),
 		});
 	}
@@ -95,7 +101,7 @@ export function buildConfigSelectors(
 				id: o.id,
 				label: o.name,
 				category,
-				currentValue: o.currentValue,
+				currentValue: selected(o.id, o.currentValue),
 				options: flatten(o.options),
 			});
 		}
