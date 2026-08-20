@@ -33,11 +33,20 @@ function formatRelativeTime(updatedAt?: number): string {
 	return new Date(updatedAt).toLocaleDateString();
 }
 
+interface MergedSession {
+	sessionId: string;
+	title: string;
+	isOpen: boolean;
+	status: 'idle' | 'running' | 'awaiting' | 'loading' | 'closed';
+	colorIndex: number;
+	updatedAt?: number;
+}
+
 /**
  * Session title bar: trigger (chevron + live-session count, warning-tinted
  * with a pulsing badge while any session awaits permission) + centered current
- * session (status dot, title, agent caption) + dropdown with open sessions,
- * "New session" entry and recent history.
+ * session (status dot, title, agent caption) + unified dropdown with open and
+ * recent sessions.
  */
 export function SessionHeader({
 	tabs,
@@ -57,7 +66,26 @@ export function SessionHeader({
 	const activeTab = tabs.find((t) => t.sessionId === activeSessionId) ?? null;
 	const awaitingCount = tabs.filter((t) => t.status === 'awaiting').length;
 	const openIds = new Set(tabs.map((t) => t.sessionId));
-	const recents = (recentSessions ?? []).filter((s) => !openIds.has(s.sessionId));
+
+	const merged: MergedSession[] = [
+		...tabs.map((t) => ({
+			sessionId: t.sessionId,
+			title: t.title,
+			isOpen: true,
+			status: t.status,
+			colorIndex: t.colorIndex,
+		})),
+		...(recentSessions ?? [])
+			.filter((s) => !openIds.has(s.sessionId))
+			.map((s) => ({
+				sessionId: s.sessionId,
+				title: s.title,
+				isOpen: false,
+				status: 'closed' as const,
+				colorIndex: 0,
+				updatedAt: s.updatedAt,
+			})),
+	];
 
 	useEffect(() => {
 		if (!open) return;
@@ -120,49 +148,80 @@ export function SessionHeader({
 
 			{open && (
 				<div class="session-menu">
-					<div class="session-menu-section">Sessions</div>
 					<div class="session-menu-list">
-						{tabs.length === 0 ? (
-							<div class="session-menu-empty">No open sessions</div>
+						{merged.length === 0 ? (
+							<div class="session-menu-empty">No sessions</div>
 						) : (
-							tabs.map((tab) => {
-								const isActive = tab.sessionId === activeSessionId;
-								const tooltip = agentLabel ? `${tab.title} — ${agentLabel}` : tab.title;
+							merged.map((s) => {
+								const isActive = s.sessionId === activeSessionId;
+								const tooltip = agentLabel ? `${s.title} — ${agentLabel}` : s.title;
+								const statusLabel = s.isOpen
+									? s.status === 'loading'
+										? ' — starting…'
+										: s.status === 'awaiting'
+											? ' — waiting for approval'
+											: s.status === 'running'
+												? ' — working'
+												: ''
+									: '';
+								const dotClass = s.isOpen
+									? `session-status-${s.status}`
+									: 'session-status-idle';
+								const dotStyle = s.isOpen
+									? { '--dot-color': MODE_COLORS[s.colorIndex % MODE_COLORS.length] } as preact.JSX.CSSProperties
+									: {};
 								return (
 									<div
-										key={tab.sessionId}
-										class={`session-menu-item${isActive ? ' active' : ''}${tab.status === 'loading' ? ' loading' : ''}`}
-										onClick={tab.status === 'loading' ? undefined : () => onSelect(tab.sessionId)}
-										title={isActive
-											? tooltip
-											: tab.status === 'loading'
-												? `${tooltip} — starting…`
-												: tab.status === 'awaiting'
-													? `${tooltip} — waiting for approval`
-													: tab.status === 'running'
-														? `${tooltip} — working`
-														: tooltip
+										key={s.sessionId}
+										class={`session-menu-item${isActive ? ' active' : ''}${s.status === 'loading' ? ' loading' : ''}`}
+										onClick={
+											s.status === 'loading'
+												? undefined
+												: s.isOpen
+													? () => onSelect(s.sessionId)
+													: () => onOpen(s.sessionId)
 										}
+										title={`${tooltip}${statusLabel}`}
 									>
 										<span
-										class={`session-status session-status-${tab.status}`}
-										style={{ '--dot-color': MODE_COLORS[tab.colorIndex % MODE_COLORS.length] } as preact.JSX.CSSProperties}
-										aria-hidden="true"
-									/>
-										<span class="session-menu-title">{tab.title}</span>
-										<button
-											class="session-menu-close"
-											onClick={(e) => {
-												e.stopPropagation();
-												onClose(tab.sessionId);
-											}}
-											title="Close session"
-											aria-label={`Close session ${tab.title}`}
-										>
-											<svg width="11" height="11" viewBox="0 0 16 16" fill="none">
-												<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-											</svg>
-										</button>
+											class={`session-status ${dotClass}${!s.isOpen ? ' on' : ''}`}
+											style={dotStyle}
+											aria-hidden="true"
+										/>
+										<span class="session-menu-title">{s.title}</span>
+										{s.updatedAt != null && (
+											<span class="session-menu-time">{formatRelativeTime(s.updatedAt)}</span>
+										)}
+										<div class="session-menu-actions">
+											{s.isOpen && (
+												<button
+													class="session-menu-close"
+													onClick={(e) => {
+														e.stopPropagation();
+														onClose(s.sessionId);
+													}}
+													title="Close session"
+													aria-label={`Close session ${s.title}`}
+												>
+													<svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+														<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+													</svg>
+												</button>
+											)}
+											<button
+												class="session-menu-delete"
+												onClick={(e) => {
+													e.stopPropagation();
+													onDelete(s.sessionId);
+												}}
+												title="Delete session"
+												aria-label={`Delete session ${s.title}`}
+											>
+												<svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+													<path d="M5 3V2.5A.5.5 0 015.5 2h5a.5.5 0 01.5.5V3M11 4v8.5a.5.5 0 01-.5.5h-5a.5.5 0 01-.5-.5V4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+												</svg>
+											</button>
+										</div>
 									</div>
 								);
 							})
@@ -178,42 +237,6 @@ export function SessionHeader({
 						<span class="session-menu-new-title">New session</span>
 						{agentLabel && <span class="session-menu-new-agent" title={agentLabel}>{agentLabel}</span>}
 					</button>
-
-					{recents.length > 0 && (
-						<>
-							<div class="session-menu-separator" />
-							<div class="session-menu-section">Recent</div>
-							<div class="session-menu-list">
-								{recents.map((session) => (
-									<div
-										key={session.sessionId}
-										class="session-menu-item"
-										onClick={() => onOpen(session.sessionId)}
-									>
-										<span
-											class={`session-status session-status-idle${session.active ? ' on' : ''}`}
-											aria-hidden="true"
-										/>
-										<span class="session-menu-title">{session.title}</span>
-										<span class="session-menu-time">{formatRelativeTime(session.updatedAt)}</span>
-										<button
-											class="session-menu-delete"
-											onClick={(e) => {
-												e.stopPropagation();
-												onDelete(session.sessionId);
-											}}
-											title="Delete session"
-											aria-label={`Delete session ${session.title}`}
-										>
-											<svg width="11" height="11" viewBox="0 0 16 16" fill="none">
-												<path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-											</svg>
-										</button>
-									</div>
-								))}
-							</div>
-						</>
-					)}
 				</div>
 			)}
 		</div>

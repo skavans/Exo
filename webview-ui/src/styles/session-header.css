@@ -188,17 +188,6 @@
 	overflow: hidden;
 }
 
-.session-menu-section {
-	flex-shrink: 0;
-	padding: var(--ct-space-md) var(--ct-space-lg) var(--ct-space-2xs);
-	font-family: var(--ct-font-mono);
-	font-size: 9px;
-	line-height: 1.2;
-	letter-spacing: 0.8px;
-	text-transform: uppercase;
-	color: var(--ct-text-muted);
-}
-
 .session-menu-list {
 	flex-shrink: 1;
 	overflow-y: auto;
@@ -257,7 +246,20 @@
 	font-variant-numeric: tabular-nums;
 }
 
-/* close/delete buttons on rows — visible on hover */
+/* actions container (close + delete) on each row — visible on hover */
+.session-menu-actions {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	flex-shrink: 0;
+	opacity: 0;
+	transition: opacity var(--ct-transition-fast);
+}
+
+.session-menu-item:hover .session-menu-actions {
+	opacity: 1;
+}
+
 .session-menu-close,
 .session-menu-delete {
 	flex-shrink: 0;
@@ -271,14 +273,8 @@
 	background: transparent;
 	color: var(--ct-icon);
 	padding: 0;
-	opacity: 0;
 	cursor: pointer;
-	transition: opacity var(--ct-transition-fast), background var(--ct-transition-fast);
-}
-
-.session-menu-item:hover .session-menu-close,
-.session-menu-item:hover .session-menu-delete {
-	opacity: 1;
+	transition: background var(--ct-transition-fast);
 }
 
 .session-menu-close:hover {
@@ -346,8 +342,4 @@
 	color: var(--ct-text-secondary);
 }
 
-.session-menu-separator {
-	height: 1px;
-	background: var(--ct-border-subtle);
-	flex-shrink: 0;
-}
+
