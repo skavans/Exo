@@ -148,7 +148,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	private _autoAllowPermissions = false;
 	private _readyHandled = false;
-	private _draftState: DraftState = { text: '', attachedFiles: [] };
+
+	/** Per-session input drafts, keyed by session id (or `pending-<n>` while spawning). */
+	private _drafts = new Map<string, DraftState>();
 
 	/** Per-session worktree terminals, keyed by session id. */
 	private readonly _sessionTerminals = new Map<string, vscode.Terminal>();
@@ -435,6 +437,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		if (pending) {
 			pending.cancelled = true;
 			this._pendingSessions.delete(sessionId);
+			this._drafts.delete(sessionId);
 		}
 
 		// Optimistic: remove the tab from the UI immediately.
@@ -505,6 +508,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		// Optimistic: remove from tabs/registry immediately.
 		this._tabList = this._tabList.filter((t) => t.sessionId !== sessionId);
 		this._sessionRegistry.delete(sessionId);
+		this._drafts.delete(sessionId);
+		this.persistDrafts();
 		this.persistUiStateSoon();
 		this.sendTabs();
 		this.sendSessionList();
@@ -628,6 +633,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			this.view?.webview.postMessage({ type: 'showChat', sessionId: pending.id, messages: this.messages, plan: null });
 			// Never let a stale `agentRunning` from the previous session disable the input.
 			this.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
+			// A fresh session starts with an empty draft (not the previous session's text).
+			this.postDraftState();
 		} else {
 			this.view?.webview.postMessage({ type: 'showChatLoading', sessionId: pending.id, title: pending.title, mode: 'load' });
 		}
@@ -649,6 +656,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			runtime.messages = [...pending.queuedMessages];
 			pending.queuedMessages = [];
 		}
+		// Move the draft typed while spawning onto the real session id.
+		const pendingDraft = this._drafts.get(pending.id);
+		if (pendingDraft) {
+			this._drafts.delete(pending.id);
+			this._drafts.set(runtime.id, pendingDraft);
+			this.persistDrafts();
+		}
 		// Only steal the view if the user hasn't navigated away meanwhile.
 		this.finishSessionOpen(runtime, title, this._activeSessionId === pending.id);
 		if (runtime.messages.some((m) => m.isQueued)) {
@@ -668,6 +682,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	/** A pending op failed: restore the previous active view (or show empty). */
 	private failPendingSession(pending: PendingSession): void {
 		this._pendingSessions.delete(pending.id);
+		this._drafts.delete(pending.id);
 		if (pending.cancelled) {
 			return;
 		}
@@ -1523,8 +1538,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	// ------------------------------------------------------------------
 
 	public updateDraftState(text: string, attachedFiles: string[]): void {
-		this._draftState = { text, attachedFiles: [...attachedFiles] };
-		void this.workspaceState.update('exo.chatDraft', this._draftState);
+		if (!this._activeSessionId) {
+			return;
+		}
+		this._drafts.set(this._activeSessionId, { text, attachedFiles: [...attachedFiles] });
+		this.persistDrafts();
 	}
 
 	public showConfigRequired(): void {
@@ -1606,12 +1624,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				}
 			}
 		}
-		const draft = this.workspaceState.get<DraftState>('exo.chatDraft');
+		const draft = this.workspaceState.get<DraftState | Record<string, DraftState>>('exo.chatDraft');
 		if (draft) {
-			this._draftState = {
-				text: draft.text ?? '',
-				attachedFiles: Array.isArray(draft.attachedFiles) ? draft.attachedFiles : [],
-			};
+			if (Array.isArray(draft.attachedFiles) || typeof draft.text === 'string') {
+				// Legacy single-draft shape — attribute to the restored active session.
+				const legacy = draft as DraftState;
+				if (this._activeSessionId) {
+					this._drafts.set(this._activeSessionId, {
+						text: legacy.text ?? '',
+						attachedFiles: Array.isArray(legacy.attachedFiles) ? legacy.attachedFiles : [],
+					});
+				}
+			} else {
+				for (const [sessionId, entry] of Object.entries(draft)) {
+					if (sessionId.startsWith('pending-')) {
+						continue;
+					}
+					this._drafts.set(sessionId, {
+						text: entry?.text ?? '',
+						attachedFiles: Array.isArray(entry?.attachedFiles) ? entry.attachedFiles : [],
+					});
+				}
+			}
 		}
 		const registry = this.workspaceState.get<SessionRegistryEntry[]>('exo.sessionRegistry');
 		if (Array.isArray(registry)) {
@@ -1671,11 +1705,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	private postDraftState(): void {
+		const draft = this._activeSessionId ? this._drafts.get(this._activeSessionId) : undefined;
 		this.view?.webview.postMessage({
 			type: 'restoreDraft',
-			text: this._draftState.text,
-			attachedFiles: this._draftState.attachedFiles,
+			text: draft?.text ?? '',
+			attachedFiles: draft?.attachedFiles ?? [],
 		});
+	}
+
+	/** Persist non-pending drafts to workspace state. */
+	private persistDrafts(): void {
+		const record: Record<string, DraftState> = {};
+		for (const [sessionId, draft] of this._drafts) {
+			if (sessionId.startsWith('pending-')) {
+				continue;
+			}
+			record[sessionId] = draft;
+		}
+		void this.workspaceState.update('exo.chatDraft', record);
 	}
 }
 
