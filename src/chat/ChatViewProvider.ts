@@ -65,6 +65,9 @@ const FALLBACK_TITLE_MAX_LEN = 48;
 /** Default agent titles (e.g. opencode's) — not real, don't read them back. */
 const DEFAULT_TITLE_PATTERN = /^(New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
+/** Per-session terminal label cap. */
+const TERMINAL_TITLE_MAX_LEN = 32;
+
 /**
  * ChatViewProvider — registry of parallel session runtimes.
  *
@@ -99,6 +102,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private _autoAllowPermissions = false;
 	private _readyHandled = false;
 	private _draftState: DraftState = { text: '', attachedFiles: [] };
+
+	/** Per-session worktree terminals, keyed by session id. */
+	private readonly _sessionTerminals = new Map<string, vscode.Terminal>();
 	private _persistUiTimer: ReturnType<typeof setTimeout> | null = null;
 	private _persistRegistryTimer: ReturnType<typeof setTimeout> | null = null;
 	private _persistRegistryDirty = false;
@@ -125,6 +131,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				provideTextDocumentContent(uri: vscode.Uri): string {
 					return contents.get(uri.toString()) ?? '';
 				},
+			}),
+			vscode.window.onDidCloseTerminal((terminal) => {
+				for (const [sessionId, t] of this._sessionTerminals) {
+					if (t === terminal) {
+						this._sessionTerminals.delete(sessionId);
+					}
+				}
 			}),
 		);
 	}
@@ -397,6 +410,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				this.sendTabs();
 			})();
 		}
+		this.disposeSessionTerminal(sessionId);
 	}
 
 	/** Permanently delete a session (from the recent menu). Optimistic UI; worktree handling in background. */
@@ -444,6 +458,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 		// Background: delete on the agent + remove the worktree folder.
 		void (async () => {
+			this.disposeSessionTerminal(sessionId);
 			const runtime = this.sessions.get(sessionId);
 			try {
 				if (runtime) {
@@ -622,11 +637,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this.upsertSessionRegistry(runtime.id, title, runtime.cwd);
 		this.persistUiStateSoon();
+		this.ensureSessionTerminal(runtime);
 		if (activate) {
 			this.showSessionRuntime(runtime);
 		}
 		this.sendTabs();
 		this.sendSessionList();
+	}
+
+	/**
+	 * Get (or create) the terminal rooted in a runtime's cwd (worktree). Created
+	 * hidden and transient: it only surfaces when the user is in the terminal
+	 * panel, and is never resurrected after a VS Code restart.
+	 */
+	private ensureSessionTerminal(runtime: SessionRuntime): vscode.Terminal {
+		const existing = this._sessionTerminals.get(runtime.id);
+		if (existing) {
+			return existing;
+		}
+		const title = (runtime.title || 'session').replace(/\s+/g, ' ').trim();
+		const name = title.length > TERMINAL_TITLE_MAX_LEN
+			? `exo: ${title.slice(0, TERMINAL_TITLE_MAX_LEN - 4)}…`
+			: `exo: ${title}`;
+		const terminal = vscode.window.createTerminal({
+			name,
+			cwd: runtime.cwd,
+			iconPath: new vscode.ThemeIcon('git-branch'),
+			color: new vscode.ThemeColor('terminal.ansiGreen'),
+			isTransient: true,
+		});
+		this._sessionTerminals.set(runtime.id, terminal);
+		return terminal;
+	}
+
+	/** Kill a session's terminal (tab close / session delete). */
+	private disposeSessionTerminal(sessionId: string): void {
+		const terminal = this._sessionTerminals.get(sessionId);
+		if (!terminal) {
+			return;
+		}
+		this._sessionTerminals.delete(sessionId);
+		try {
+			terminal.dispose();
+		} catch { /* ignore */ }
 	}
 
 	private buildRuntimeCallbacks(getId: () => string): SessionRuntimeCallbacks {
@@ -948,6 +1001,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.sendTokenUsageFor(runtime.id);
 		this.postDraftState();
 		this.sendTabs();
+		this.ensureSessionTerminal(runtime).show(false);
 	}
 
 	public updateMessages(): void {
@@ -1265,6 +1319,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	/** Full disconnect (extension deactivate / config change). Best-effort close + kill all. */
 	public disconnectAcp(): void {
 		this._pendingSessions.clear();
+		for (const [sessionId, terminal] of this._sessionTerminals) {
+			try {
+				terminal.dispose();
+			} catch { /* ignore */ }
+			this._sessionTerminals.delete(sessionId);
+		}
 		for (const runtime of this.sessions.values()) {
 			try {
 				runtime.acpClient.disconnect();
