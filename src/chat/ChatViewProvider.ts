@@ -69,6 +69,41 @@ const DEFAULT_TITLE_PATTERN = /^(New session|Child session) - \d{4}-\d{2}-\d{2}T
 const TERMINAL_TITLE_MAX_LEN = 32;
 
 /**
+ * Terminal ANSI color keys, ordered exactly like `MODE_COLORS` in
+ * `webview-ui/src/types.ts` — the two must stay in sync (separate bundles,
+ * different value forms: ThemeColor strings here, CSS vars in the webview).
+ */
+const SESSION_COLOR_KEYS = [
+	'terminal.ansiBlue',
+	'terminal.ansiYellow',
+	'terminal.ansiCyan',
+	'terminal.ansiMagenta',
+	'terminal.ansiGreen',
+	'terminal.ansiRed',
+	'terminal.ansiBrightYellow',
+	'terminal.ansiBrightBlue',
+	'terminal.ansiBrightMagenta',
+	'terminal.ansiBrightCyan',
+];
+
+/** Deterministic per-session color index 0..9 (djb2 over the agent-owned session id). */
+function sessionColorIndex(sessionId: string): number {
+	let h = 5381;
+	for (let i = 0; i < sessionId.length; i++) {
+		h = ((h << 5) + h + sessionId.charCodeAt(i)) | 0;
+	}
+	return (h >>> 0) % SESSION_COLOR_KEYS.length;
+}
+
+/** Terminal label: `exo: {title}` clamped to TERMINAL_TITLE_MAX_LEN. */
+function formatTerminalName(title: string): string {
+	const t = (title || 'session').replace(/\s+/g, ' ').trim();
+	return t.length > TERMINAL_TITLE_MAX_LEN
+		? `exo: ${t.slice(0, TERMINAL_TITLE_MAX_LEN - 4)}…`
+		: `exo: ${t}`;
+}
+
+/**
  * ChatViewProvider — registry of parallel session runtimes.
  *
  * One tab = one `SessionRuntime` = one agent subprocess with its own cwd
@@ -662,15 +697,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		if (existing) {
 			return existing;
 		}
-		const title = (runtime.title || 'session').replace(/\s+/g, ' ').trim();
-		const name = title.length > TERMINAL_TITLE_MAX_LEN
-			? `exo: ${title.slice(0, TERMINAL_TITLE_MAX_LEN - 4)}…`
-			: `exo: ${title}`;
 		const terminal = vscode.window.createTerminal({
-			name,
+			name: formatTerminalName(runtime.title),
 			cwd: runtime.cwd,
 			iconPath: new vscode.ThemeIcon('git-branch'),
-			color: new vscode.ThemeColor('terminal.ansiGreen'),
+			color: new vscode.ThemeColor(SESSION_COLOR_KEYS[sessionColorIndex(runtime.id)]),
 			isTransient: true,
 		});
 		this._sessionTerminals.set(runtime.id, terminal);
@@ -687,6 +718,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		try {
 			terminal.dispose();
 		} catch { /* ignore */ }
+	}
+
+	/** Re-label a session's terminal when a real title arrives (all 3 title sources). */
+	private renameSessionTerminal(sessionId: string, title: string): void {
+		const terminal = this._sessionTerminals.get(sessionId);
+		if (!terminal) {
+			return;
+		}
+		const name = formatTerminalName(title);
+		if (terminal.name !== name) {
+			terminal.name = name;
+		}
 	}
 
 	private buildRuntimeCallbacks(getId: () => string): SessionRuntimeCallbacks {
@@ -849,6 +892,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			onDisconnect: () => {
 				this.stopTitlePolling(runtime);
 				cancelAllPermissions(this.permissionContext(runtime));
+				this.disposeSessionTerminal(runtime.id);
 				runtime.isStreaming = false;
 				runtime.agentRunning = false;
 				if (this.sessions.get(runtime.id) === runtime) {
@@ -883,6 +927,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this.upsertSessionRegistry(sessionId, title, runtime.cwd, updatedAt);
 		this.persistUiStateSoon();
+		this.renameSessionTerminal(sessionId, title);
 		this.sendTabs();
 		this.sendSessionList();
 	}
@@ -1052,6 +1097,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			sessionId: p.id,
 			title: p.title,
 			status: 'loading' as const,
+			colorIndex: sessionColorIndex(p.id),
 		}));
 		const tabs = [
 			...this._tabList.map((t) => {
@@ -1060,6 +1106,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 					sessionId: t.sessionId,
 					title: runtime?.title || t.title,
 					status: runtime ? runtime.status : 'idle',
+					colorIndex: sessionColorIndex(t.sessionId),
 				};
 			}),
 			...pendingTabs,

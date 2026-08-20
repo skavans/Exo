@@ -134,12 +134,12 @@
 	width: 6px;
 	height: 6px;
 	border-radius: 50%;
-	background: var(--ct-icon);
+	background: var(--dot-color, var(--ct-icon));
 	opacity: 0.4;
 }
 
 .session-status.on {
-	background: var(--ct-mode, var(--ct-icon));
+	background: var(--dot-color, var(--ct-icon));
 	opacity: 0.9;
 }
 
