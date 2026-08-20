@@ -84,8 +84,11 @@ function applyWithRetry(content: string, diff: string): string | null {
  * Recover the indentation offset opencode's `trimDiff` stripped from the
  * patch. Each hunk carries `oldStart` (1-based); for its first context or
  * removed line, the file's line at that offset gives the original indent.
- * diff — so their difference is exactly the trimmed prefix (works for tabs too:
- * we push the same leading chars back that were sliced off).
+ * The trimmed patch line's indent differs from the file line's indent by
+ * exactly the trimmed prefix (works for tabs too: we push the same leading
+ * chars back that were sliced off). Any non-empty content line yields the
+ * same delta, since trimDiff strips the global minimum indent across the
+ * whole patch.
  */
 function computeTrimOffset(content: string, diff: string): number | null {
 	let parsed;
@@ -116,7 +119,13 @@ function computeTrimOffset(content: string, diff: string): number | null {
 	return null;
 }
 
-/** Push `delta` leading chars back onto every diff content line (inverse of trimDiff). */
+/**
+ * Push `delta` leading chars back onto every diff content line (inverse of
+ * trimDiff). Empty-content lines are left untouched: trimDiff strips them
+ * fully (a blank context line becomes just the ` ` prefix), so re-adding
+ * padding would make applyPatch's exact context matching fail on hunks that
+ * contain blank lines.
+ */
 function reindentDiff(diff: string, delta: number): string {
 	if (delta <= 0) {
 		return diff;
@@ -127,7 +136,8 @@ function reindentDiff(diff: string, delta: number): string {
 		.map((line) =>
 			(line.startsWith('+') || line.startsWith('-') || line.startsWith(' ')) &&
 			!line.startsWith('---') &&
-			!line.startsWith('+++')
+			!line.startsWith('+++') &&
+			line.slice(1).length > 0
 				? line[0] + pad + line.slice(1)
 				: line,
 		)
