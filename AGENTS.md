@@ -23,7 +23,7 @@ Exo is a VS Code extension that provides an interface to an autonomous AI agent 
 
 **Key UI behaviors:**
 
-- **Input area:** `@`-mention attaches files (fuzzy-matched); `/`-slash commands advertised by agent. Draft text + attached-file chips persist across view switches and VS Code restarts (textarea is controlled, mirrored to host, restored via dedicated draft message). Images are NOT persisted (deliberate — base64 weight).
+- **Input area:** `@`-mention attaches files (fuzzy-matched); `/`-slash commands advertised by agent. Draft text + attached-file chips are **per-session** — each session id owns its draft (host `Map<sessionId, DraftState>`), so switching sessions swaps the input content, a new session starts with an empty draft, and returning to a session continues the draft. Drafts persist across view switches and VS Code restarts; deleted sessions drop theirs. Images are NOT persisted (deliberate — base64 weight).
 - **Auto-Allow Lock:** toggle at the start of `#controls-row` (before mode dropdown). Green/locked (`safe`, default) = standard permission flow; red/open (`auto`) = all `session/request_permission` requests are auto-approved client-side without a card or Diff Editor. Non-persistent (resets on every startup/session load).
 - **Attachments:** three channels converge on two in-memory arrays in `MessageInput` (`attachedFiles: string[]`, `images: AttachedImage[]`): `@`-mention, drag-drop of file paths (validated host-side — folders rejected), and drag-drop/paste of images (capability-gated by `canPromptImage`).
 - **File/image chips:** editable chips before send; read-only variants render under each user message in history.
@@ -36,7 +36,7 @@ Exo is a VS Code extension that provides an interface to an autonomous AI agent 
 
 **Key persistence behavior:**
 - Sidebar webview uses `retainContextWhenHidden` (set in `extension.ts`), so switching sidebar views keeps the live webview and Preact state intact.
-- Extension Host persists three `workspaceState` entries via debounced saves: `exo.chatUiState` (open tab list `[{sessionId,title,cwd}]` + active session id), `exo.chatDraft` (textarea text + attached file paths — no images), `exo.sessionRegistry` (recent sessions for the header menu: id/title/updatedAt/cwd).
+- Extension Host persists three `workspaceState` entries via debounced saves: `exo.chatUiState` (open tab list `[{sessionId,title,cwd}]` + active session id), `exo.chatDraft` (per-session record `{ [sessionId]: { text, attachedFiles } }` — no images; legacy single-draft value is migrated to the restored active session; `pending-*` keys never persist), `exo.sessionRegistry` (recent sessions for the header menu: id/title/updatedAt/cwd).
 - On webview startup (`handleReady`), host restores these and reconnects the ACTIVE tab's agent via `session/load` or `session/resume`; the other persisted tabs stay lazy (header-only) and spawn their agent on first click. Session content comes from agent replay and remains agent-owned.
 
 **Key assistant-message behavior:**
