@@ -153,6 +153,18 @@
 	animation: session-dot-pulse 1.4s ease-in-out infinite;
 }
 
+.session-status.session-status-loading {
+	background: transparent;
+	border: 1.5px solid color-mix(in srgb, var(--ct-text-secondary) 30%, transparent);
+	border-top-color: var(--ct-text-secondary);
+	opacity: 1;
+	animation: session-status-spin 0.9s linear infinite;
+}
+
+@keyframes session-status-spin {
+	to { transform: rotate(360deg); }
+}
+
 @keyframes session-dot-pulse {
 	0%, 100% { opacity: 1; transform: scale(1); }
 	50% { opacity: 0.35; transform: scale(0.75); }
@@ -208,6 +220,19 @@
 
 .session-menu-item.active {
 	background: var(--ct-bg-hover);
+}
+
+/* In-flight create/load — dimmed, not selectable (close × still works). */
+.session-menu-item.loading {
+	cursor: default;
+}
+
+.session-menu-item.loading:hover {
+	background: transparent;
+}
+
+.session-menu-item.loading .session-menu-title {
+	color: var(--ct-text-secondary);
 }
 
 .session-menu-item.active .session-menu-title {

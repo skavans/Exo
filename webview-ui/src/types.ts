@@ -51,13 +51,19 @@ export interface AcpSessionInfo {
 }
 
 /** Tab lifecycle status (host-side, from updateTabs). */
-export type TabStatus = 'idle' | 'running' | 'awaiting';
+export type TabStatus = 'idle' | 'running' | 'awaiting' | 'loading';
 
 /** One open session tab. */
 export interface TabInfo {
 	sessionId: string;
 	title: string;
 	status: TabStatus;
+}
+
+/** In-flight session create/load — shown as a loading view until showChat arrives. */
+export interface ChatLoadingInfo {
+	title: string;
+	mode: 'new' | 'load';
 }
 
 /** Recent-session item shown in the "+" dropdown. */

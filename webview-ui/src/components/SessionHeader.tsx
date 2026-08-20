@@ -126,15 +126,17 @@ export function SessionHeader({
 								return (
 									<div
 										key={tab.sessionId}
-										class={`session-menu-item${isActive ? ' active' : ''}`}
-										onClick={() => onSelect(tab.sessionId)}
+										class={`session-menu-item${isActive ? ' active' : ''}${tab.status === 'loading' ? ' loading' : ''}`}
+										onClick={tab.status === 'loading' ? undefined : () => onSelect(tab.sessionId)}
 										title={isActive
 											? tooltip
-											: tab.status === 'awaiting'
-												? `${tooltip} — waiting for approval`
-												: tab.status === 'running'
-													? `${tooltip} — working`
-													: tooltip
+											: tab.status === 'loading'
+												? `${tooltip} — starting…`
+												: tab.status === 'awaiting'
+													? `${tooltip} — waiting for approval`
+													: tab.status === 'running'
+														? `${tooltip} — working`
+														: tooltip
 										}
 									>
 										<span class={`session-status session-status-${tab.status}`} aria-hidden="true" />

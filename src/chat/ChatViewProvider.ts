@@ -17,7 +17,7 @@ import {
 	type PermissionHandlerContext,
 } from '../acp/handlers/permission';
 import { applyToolCallPatch, type EditSpec } from '../acp/handlers/util';
-import { createWorktree, registerWorktreeInScm, removeWorktree, hasUncommittedChanges } from '../worktree';
+import { createWorktree, registerWorktreeInScm, removeWorktree, sessionHasUncommittedWork } from '../worktree';
 import { StreamThrottle } from './StreamThrottle';
 import type { AvailableCommand, PlanEntry } from '@agentclientprotocol/sdk';
 
@@ -37,6 +37,21 @@ interface SessionRegistryEntry {
 	title: string;
 	updatedAt: number;
 	cwd: string;
+}
+
+/**
+ * In-flight session operation (create/load) shown to the user as a loading tab
+ * until the real runtime exists. Never persisted; a restart simply drops it.
+ */
+interface PendingSession {
+	/** Temporary id (`pending-<n>`) — not an agent session id. */
+	id: string;
+	title: string;
+	mode: 'new' | 'load';
+	/** Session to restore the active view to if this pending operation fails. */
+	prevActiveId: string | null;
+	/** Set when the user closes the pending tab — resolve/fail become no-ops. */
+	cancelled: boolean;
 }
 
 const MAX_RECENT_SESSIONS = 10;
@@ -76,6 +91,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/** Recent-sessions registry (persistent) — drives the "+" menu. */
 	private _sessionRegistry = new Map<string, SessionRegistryEntry>();
+
+	/** In-flight create/load operations (loading tabs). Not persisted. */
+	private _pendingSessions = new Map<string, PendingSession>();
+	private _pendingCounter = 0;
 
 	private _autoAllowPermissions = false;
 	private _readyHandled = false;
@@ -265,11 +284,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	// Session lifecycle
 	// ------------------------------------------------------------------
 
-	/** Create a brand-new session: worktree (or shared root) cwd + session/new. */
-	public async newSession(): Promise<void> {
+	/** Create a brand-new session: worktree (or shared root) cwd + session/new. Returns the runtime or null. */
+	public async newSession(): Promise<SessionRuntime | null> {
 		if (!this.acpAgentConfig()) {
-			return;
+			return null;
 		}
+		// Ignore repeated clicks while a create is already in flight.
+		for (const p of this._pendingSessions.values()) {
+			if (p.mode === 'new') {
+				return null;
+			}
+		}
+		const pending = this.addPendingSession('new', 'New Chat', this._activeSessionId ?? undefined);
 		let cwd = this.getWorkspaceRoot();
 		try {
 			const wt = await createWorktree(this.getWorkspaceRoot());
@@ -282,10 +308,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		try {
 			const runtime = await this.spawnSession('', cwd, 'new');
-			this.finishSessionOpen(runtime, 'New Chat');
+			this.resolvePendingSession(pending, runtime, 'New Chat');
+			return runtime;
 		} catch (err) {
 			console.error('[Exo ACP] newSession failed:', err);
+			this.failPendingSession(pending);
 			vscode.window.showErrorMessage(`Failed to create session: ${err instanceof Error ? err.message : String(err)}`);
+			return null;
 		}
 	}
 
@@ -304,20 +333,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		const meta = this._tabList.find((t) => t.sessionId === sessionId)
 			?? { sessionId, title: this._sessionRegistry.get(sessionId)?.title ?? 'Chat', cwd: this._sessionRegistry.get(sessionId)?.cwd };
 		const cwd = meta.cwd ?? this.getWorkspaceRoot();
+		const pending = this.addPendingSession('load', meta.title, this._activeSessionId ?? undefined);
 		if (cwd !== this.getWorkspaceRoot()) {
 			void registerWorktreeInScm(cwd);
 		}
 		try {
 			const runtime = await this.spawnSession(sessionId, cwd, 'load');
-			this.finishSessionOpen(runtime, meta.title);
+			this.resolvePendingSession(pending, runtime, meta.title);
 		} catch (err) {
 			console.error('[Exo ACP] switchSession failed:', err);
 			// Session load failed — restart it (agent may have lost the session).
 			try {
 				const runtime = await this.spawnSession(sessionId, cwd, 'new');
-				this.finishSessionOpen(runtime, 'New Chat');
+				this.resolvePendingSession(pending, runtime, 'New Chat');
 			} catch (err2) {
 				console.error('[Exo ACP] fallback newSession failed:', err2);
+				this.failPendingSession(pending);
 				vscode.window.showErrorMessage(`Failed to open session ${sessionId}`);
 			}
 		}
@@ -325,22 +356,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/** Close the tab: kill the agent process. Session stays in the recent menu. */
 	public async closeTab(sessionId: string): Promise<void> {
-		const runtime = this.sessions.get(sessionId);
-		if (runtime) {
-			try {
-				if (runtime.acpClient.canClose) {
-					await runtime.acpClient.closeSession(sessionId);
-				}
-			} catch (err) {
-				console.error('[Exo ACP] closeSession failed (best-effort):', err);
-			}
-			try {
-				runtime.acpClient.disconnect();
-			} catch { /* ignore */ }
-			this.stopTitlePolling(runtime);
-			cancelAllPermissions(this.permissionContext(runtime));
-			this.sessions.delete(sessionId);
+		// Cancel an in-flight create/load if its loading tab is closed.
+		const pending = this._pendingSessions.get(sessionId);
+		if (pending) {
+			pending.cancelled = true;
+			this._pendingSessions.delete(sessionId);
 		}
+
+		// Optimistic: remove the tab from the UI immediately.
 		this._tabList = this._tabList.filter((t) => t.sessionId !== sessionId);
 		this.persistUiStateSoon();
 		this.sendTabs();
@@ -353,6 +376,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			}
 		}
 		this.sendSessionList();
+
+		// Background: close + kill the agent (best-effort, no UI wait).
+		const runtime = this.sessions.get(sessionId);
+		if (runtime) {
+			void (async () => {
+				try {
+					if (runtime.acpClient.canClose) {
+						await runtime.acpClient.closeSession(sessionId);
+					}
+				} catch (err) {
+					console.error('[Exo ACP] closeSession failed (best-effort):', err);
+				}
+				try {
+					runtime.acpClient.disconnect();
+				} catch { /* ignore */ }
+				this.stopTitlePolling(runtime);
+				cancelAllPermissions(this.permissionContext(runtime));
+				this.sessions.delete(sessionId);
+				this.sendTabs();
+			})();
+		}
 	}
 
 	/** Permanently delete a session (from the recent menu). Optimistic UI; worktree handling in background. */
@@ -361,63 +405,72 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		const listEntry = this._tabList.find((t) => t.sessionId === sessionId);
 		const cwd = listEntry?.cwd ?? entry?.cwd;
 
-		// 1. Delete on the agent — from the live runtime or a temp process.
-		const runtime = this.sessions.get(sessionId);
-		try {
-			if (runtime) {
-				try {
-					if (runtime.acpClient.canDelete) {
-						await runtime.acpClient.deleteSession(sessionId);
+		// A git worktree session: warn before destroying work that only lives
+		// here (uncommitted changes or commits absent from main). Non-git
+		// sessions (cwd === workspace root) delete silently.
+		if (cwd && cwd !== this.getWorkspaceRoot()) {
+			try {
+				const dirty = await sessionHasUncommittedWork(cwd);
+				if (dirty) {
+					const choice = await vscode.window.showWarningMessage(
+						'This session has uncommitted changes or commits not in main. Delete the session and its worktree anyway?',
+						{ modal: true },
+						'Delete',
+						'Cancel',
+					);
+					if (choice !== 'Delete') {
+						return;
 					}
-				} finally {
-					try { runtime.acpClient.disconnect(); } catch { /* ignore */ }
-					this.stopTitlePolling(runtime);
-					this.sessions.delete(sessionId);
 				}
-			} else if (cwd) {
-				await this.deleteSessionViaTempAgent(sessionId, cwd);
+			} catch (err) {
+				console.error('[Exo] worktree dirty-check failed (deleting anyway):', err);
 			}
-		} catch (err) {
-			console.error('[Exo ACP] deleteSession failed (optimistic — continuing):', err);
 		}
 
-		// 2. Remove from tabs/registry.
+		// Optimistic: remove from tabs/registry immediately.
 		this._tabList = this._tabList.filter((t) => t.sessionId !== sessionId);
 		this._sessionRegistry.delete(sessionId);
+		this.persistUiStateSoon();
+		this.sendTabs();
+		this.sendSessionList();
 		if (this._activeSessionId === sessionId) {
 			const next = this._tabList[this._tabList.length - 1];
 			if (next) {
-				await this.switchSession(next.sessionId);
+				void this.switchSession(next.sessionId);
 			} else {
 				this.showEmpty();
 			}
 		}
-		this.persistUiStateSoon();
 
-		// 3. Worktree cleanup (background-ish, may prompt).
-		if (cwd && cwd !== this.getWorkspaceRoot()) {
+		// Background: delete on the agent + remove the worktree folder.
+		void (async () => {
+			const runtime = this.sessions.get(sessionId);
 			try {
-				const dirty = await hasUncommittedChanges(cwd);
-				if (dirty) {
-					const choice = await vscode.window.showWarningMessage(
-						'This session\'s worktree has uncommitted changes. Delete the worktree anyway?',
-						{ modal: true },
-						'Delete worktree',
-						'Keep worktree',
-					);
-					if (choice !== 'Delete worktree') {
-						this.sendTabs();
-						this.sendSessionList();
-						return;
+				if (runtime) {
+					try {
+						if (runtime.acpClient.canDelete) {
+							await runtime.acpClient.deleteSession(sessionId);
+						}
+					} finally {
+						try { runtime.acpClient.disconnect(); } catch { /* ignore */ }
+						this.stopTitlePolling(runtime);
+						this.sessions.delete(sessionId);
 					}
+				} else if (cwd) {
+					await this.deleteSessionViaTempAgent(sessionId, cwd);
 				}
-				await removeWorktree(cwd);
 			} catch (err) {
-				console.error('[Exo] worktree removal failed:', err);
+				console.error('[Exo ACP] deleteSession failed (session may persist on agent):', err);
+				vscode.window.showWarningMessage('Exo: failed to delete the session on the agent.');
 			}
-		}
-		this.sendTabs();
-		this.sendSessionList();
+			if (cwd && cwd !== this.getWorkspaceRoot()) {
+				try {
+					await removeWorktree(cwd);
+				} catch (err) {
+					console.error('[Exo] worktree removal failed:', err);
+				}
+			}
+		})();
 	}
 
 	private async deleteSessionViaTempAgent(sessionId: string, cwd: string): Promise<void> {
@@ -461,6 +514,72 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	// Runtime creation & callbacks
 	// ------------------------------------------------------------------
 
+	// --- Pending (in-flight create/load) sessions ---
+
+	/**
+	 * Start an in-flight session op: show a loading tab + loading view
+	 * immediately, resolve it when the real runtime exists.
+	 */
+	private addPendingSession(mode: 'new' | 'load', title: string, prevActiveId?: string): PendingSession {
+		const pending: PendingSession = {
+			id: `pending-${++this._pendingCounter}`,
+			title,
+			mode,
+			prevActiveId: prevActiveId ?? null,
+			cancelled: false,
+		};
+		this._pendingSessions.set(pending.id, pending);
+		this._activeSessionId = pending.id;
+		this.sendTabs();
+		this.view?.webview.postMessage({
+			type: 'showChatLoading',
+			sessionId: pending.id,
+			title,
+			mode,
+		});
+		return pending;
+	}
+
+	/** Swap a pending loading tab for the real runtime (or dispose if cancelled). */
+	private resolvePendingSession(pending: PendingSession, runtime: SessionRuntime, title: string): void {
+		this._pendingSessions.delete(pending.id);
+		if (pending.cancelled) {
+			// Tab was closed while loading — don't leak the spawned agent.
+			try {
+				runtime.acpClient.disconnect();
+			} catch { /* ignore */ }
+			return;
+		}
+		// Only steal the view if the user hasn't navigated away meanwhile.
+		this.finishSessionOpen(runtime, title, this._activeSessionId === pending.id);
+	}
+
+	/** A pending op failed: restore the previous active view (or show empty). */
+	private failPendingSession(pending: PendingSession): void {
+		this._pendingSessions.delete(pending.id);
+		if (pending.cancelled) {
+			return;
+		}
+		const prev = pending.prevActiveId;
+		const prevRuntime = prev ? this.sessions.get(prev) : undefined;
+		if (prevRuntime) {
+			this.showSessionRuntime(prevRuntime);
+		} else if (prev && this._pendingSessions.has(prev)) {
+			// The previous "active" was another in-flight op — show it instead.
+			this._activeSessionId = prev;
+			this.persistUiStateSoon();
+			this.sendTabs();
+			this.view?.webview.postMessage({
+				type: 'showChatLoading',
+				sessionId: prev,
+				title: this._pendingSessions.get(prev)?.title ?? '',
+				mode: this._pendingSessions.get(prev)?.mode ?? 'load',
+			});
+		} else {
+			this.showEmpty();
+		}
+	}
+
 	private spawnSession(
 		sessionId: string,
 		cwd: string,
@@ -494,8 +613,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		})();
 	}
 
-	/** Register the runtime in sessions + tabs + registry, save state, show it. */
-	private finishSessionOpen(runtime: SessionRuntime, title: string): void {
+	/** Register the runtime in sessions + tabs + registry, save state, optionally show it. */
+	private finishSessionOpen(runtime: SessionRuntime, title: string, activate = true): void {
 		this.sessions.set(runtime.id, runtime);
 		runtime.title = title;
 		if (!this._tabList.some((t) => t.sessionId === runtime.id)) {
@@ -503,7 +622,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this.upsertSessionRegistry(runtime.id, title, runtime.cwd);
 		this.persistUiStateSoon();
-		this.showSessionRuntime(runtime);
+		if (activate) {
+			this.showSessionRuntime(runtime);
+		}
 		this.sendTabs();
 		this.sendSessionList();
 	}
@@ -833,16 +954,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.view?.webview.postMessage({ type: 'updateMessages', messages: this.messages });
 	}
 
-	/** Tab strip: title + status per open tab. */
+	/** Tab strip: title + status per open tab. Pending (in-flight) tabs trail the real ones. */
 	public sendTabs(): void {
-		const tabs = this._tabList.map((t) => {
-			const runtime = this.sessions.get(t.sessionId);
-			return {
-				sessionId: t.sessionId,
-				title: runtime?.title || t.title,
-				status: runtime ? runtime.status : 'idle',
-			};
-		});
+		const pendingTabs = [...this._pendingSessions.values()].map((p) => ({
+			sessionId: p.id,
+			title: p.title,
+			status: 'loading' as const,
+		}));
+		const tabs = [
+			...this._tabList.map((t) => {
+				const runtime = this.sessions.get(t.sessionId);
+				return {
+					sessionId: t.sessionId,
+					title: runtime?.title || t.title,
+					status: runtime ? runtime.status : 'idle',
+				};
+			}),
+			...pendingTabs,
+		];
 		this.view?.webview.postMessage({ type: 'updateTabs', tabs, activeSessionId: this._activeSessionId });
 	}
 
@@ -1135,6 +1264,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/** Full disconnect (extension deactivate / config change). Best-effort close + kill all. */
 	public disconnectAcp(): void {
+		this._pendingSessions.clear();
 		for (const runtime of this.sessions.values()) {
 			try {
 				runtime.acpClient.disconnect();
@@ -1219,9 +1349,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this._persistUiTimer = setTimeout(() => {
 			this._persistUiTimer = null;
+			// Never persist a pending (`pending-<n>`) id as the active session.
+			const active = this._activeSessionId && !this._pendingSessions.has(this._activeSessionId)
+				? this._activeSessionId
+				: null;
 			void this.workspaceState.update('exo.chatUiState', {
 				tabs: this._tabList,
-				activeSessionId: this._activeSessionId,
+				activeSessionId: active,
 			} satisfies PersistedChatUiState);
 		}, 50);
 	}

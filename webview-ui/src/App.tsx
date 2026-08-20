@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'preact/hooks';
-import type { ChatMessage, Plan, MessageBlock, CommandInfo, AgentInfo, AttachedImage, TabInfo, RecentSessionInfo } from './types';
+import type { ChatMessage, Plan, MessageBlock, CommandInfo, AgentInfo, AttachedImage, TabInfo, RecentSessionInfo, ChatLoadingInfo } from './types';
 import { formatAgentLabel, useActiveModeColor } from './types';
 import { vscode } from './vscode';
 import { MessageList } from './components/MessageList';
 import { MessageInput } from './components/MessageInput';
 import { TodoList } from './components/TodoList';
 import { SessionHeader } from './components/SessionHeader';
+import { ChatLoading } from './components/ChatLoading';
 import { ConfigRequired } from './components/ConfigRequired';
 import { resolveThemeId, setTheme, getThemeVersion, type ThemeKind } from './shiki';
 
@@ -34,6 +35,7 @@ export function App() {
 	const [tabs, setTabs] = useState<TabInfo[]>([]);
 	const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 	const [recentSessions, setRecentSessions] = useState<RecentSessionInfo[]>([]);
+	const [chatLoading, setChatLoading] = useState<ChatLoadingInfo | null>(null);
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [config, setConfig] = useState<ConfigState | null>(null);
@@ -88,7 +90,7 @@ export function App() {
 
 	const handleSelectTab = useCallback((sessionId: string) => {
 		setMenuOpen(false);
-		if (sessionId !== activeSessionIdRef.current) {
+		if (sessionId !== activeSessionIdRef.current && !sessionId.startsWith('pending-')) {
 			vscode.postMessage({ type: 'switchSession', sessionId });
 		}
 	}, []);
@@ -164,11 +166,27 @@ export function App() {
 						setPlan(null);
 						setTokenUsage(null);
 						setTokenLimit(null);
+						setChatLoading(null);
 					}
 					break;
 				}
 				case 'updateSessions': {
 					setRecentSessions((message.sessions as RecentSessionInfo[] | undefined) ?? []);
+					break;
+				}
+				case 'showChatLoading': {
+					const sid = (message.sessionId as string | null) ?? null;
+					activeSessionIdRef.current = sid;
+					setActiveSessionId(sid);
+					setMessages([]);
+					setPlan(null);
+					setTokenUsage(null);
+					setTokenLimit(null);
+					setConfigRequired(false);
+					setChatLoading({
+						title: (message.title as string | undefined) ?? '',
+						mode: message.mode === 'new' ? 'new' : 'load',
+					});
 					break;
 				}
 				case 'showChat': {
@@ -180,6 +198,7 @@ export function App() {
 					setTokenUsage(null);
 					setTokenLimit(null);
 					setConfigRequired(false);
+					setChatLoading(null);
 					break;
 				}
 				case 'showEmpty': {
@@ -190,6 +209,7 @@ export function App() {
 					setTokenUsage(null);
 					setTokenLimit(null);
 					setConfigRequired(false);
+					setChatLoading(null);
 					break;
 				}
 				case 'showSessionPicker': {
@@ -200,6 +220,7 @@ export function App() {
 					setConfigRequired(true);
 					setConfigPath(typeof message.configPath === 'string' ? message.configPath : null);
 					setActiveSessionId(null);
+					setChatLoading(null);
 					break;
 				}
 				case 'updateTokenUsage': {
@@ -331,7 +352,9 @@ export function App() {
 					</div>
 				)}
 			</div>
-			{activeSessionId ? (
+			{chatLoading ? (
+				<ChatLoading title={chatLoading.title} mode={chatLoading.mode} />
+			) : activeSessionId ? (
 				<>
 					<MessageList key={activeSessionId} messages={messages} themeVersion={themeVersion} />
 					{plan && <TodoList plan={plan} />}

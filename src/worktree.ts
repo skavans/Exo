@@ -73,6 +73,53 @@ export async function hasUncommittedChanges(worktreePath: string): Promise<boole
 	}
 }
 
+/**
+ * Resolve the "main" branch of the shared repository: origin's default branch
+ * (`origin/HEAD`) or, failing that, a local `main`/`master`. Returns null when
+ * undeterminable (bare repo, no remote, unusual branch name).
+ */
+async function resolveMainBranch(worktreePath: string): Promise<string | null> {
+	try {
+		const head = (await runGit(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], worktreePath)).trim();
+		if (head) {
+			return head;
+		}
+	} catch {
+		// fall through to local main/master
+	}
+	for (const branch of ['main', 'master']) {
+		try {
+			await runGit(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], worktreePath);
+			return branch;
+		} catch {
+			// try next
+		}
+	}
+	return null;
+}
+
+/**
+ * True when the worktree would lose valuable work on removal: uncommitted/
+ * untracked changes, or commits reachable from its HEAD but absent from the
+ * main branch (i.e. agent work not merged anywhere else). Best-effort — any
+ * git failure is treated as "clean" except the check itself being relevant.
+ */
+export async function sessionHasUncommittedWork(worktreePath: string): Promise<boolean> {
+	if (await hasUncommittedChanges(worktreePath)) {
+		return true;
+	}
+	const main = await resolveMainBranch(worktreePath);
+	if (!main) {
+		return false;
+	}
+	try {
+		const out = await runGit(['rev-list', '--count', `${main}..HEAD`], worktreePath);
+		return parseInt(out.trim(), 10) > 0;
+	} catch {
+		return false;
+	}
+}
+
 /** Delete the worktree (force — the caller is responsible for dirty state). */
 export async function removeWorktree(worktreePath: string): Promise<boolean> {
 	try {

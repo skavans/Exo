@@ -157,11 +157,12 @@ export class WebviewMessageHandler {
 		images?: Array<{ mimeType: string; data: string; name?: string }>,
 		opts?: { preQueued?: boolean },
 	): Promise<void> {
-		// Guarantee an active session runtime.
-		if (!this.provider.session) {
-			await this.provider.newSession();
+		// Guarantee an active session runtime (capture it — the user may
+		// navigate away while the new session is still spawning).
+		let runtime = this.provider.session;
+		if (!runtime) {
+			runtime = await this.provider.newSession();
 		}
-		const runtime = this.provider.session;
 		if (!runtime || !runtime.acpClient.sessionId) {
 			this.pushAssistantError('No active session');
 			return;
