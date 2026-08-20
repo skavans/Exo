@@ -1,4 +1,5 @@
 import type { ChatViewProvider } from '../ChatViewProvider';
+import type { SessionRuntime } from '../SessionRuntime';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -148,19 +149,37 @@ export class WebviewMessageHandler {
 	 * Main flow: text → ACP prompt → streamed response via callbacks.
 	 * Runs against the active session runtime; if none — creates one first.
 	 *
-	 * `opts.preQueued` — the message is already rendered as `isQueued` (reject follow-up):
+	 * `opts.preQueued` — the message is already rendered as `isQueued` (reject
+	 * follow-up, or an optimistic message typed while the new session spawned):
 	 * don't push a new user message, just flip the flag on the existing one.
+	 * `opts.queuedMessage` — which queued message to flip (default: first
+	 * `isQueued` in history). `opts.runtime` — dispatch to a specific runtime
+	 * even if the user navigated away while it was still spawning.
 	 */
 	public async handleUserMessage(
 		text: string,
 		attachedFiles?: string[],
 		images?: Array<{ mimeType: string; data: string; name?: string }>,
-		opts?: { preQueued?: boolean },
+		opts?: { preQueued?: boolean; runtime?: SessionRuntime; queuedMessage?: ChatMessage },
 	): Promise<void> {
 		// Guarantee an active session runtime (capture it — the user may
 		// navigate away while the new session is still spawning).
-		let runtime = this.provider.session;
+		let runtime = opts?.runtime ?? this.provider.session;
 		if (!runtime) {
+			const pending = this.provider.activePendingNewSession;
+			if (pending) {
+				// Session still spawning — render the message optimistically as
+				// queued; resolvePendingSession dispatches it when it's ready.
+				pending.queuedMessages.push({
+					role: 'user',
+					blocks: [{ type: 'text', content: text }],
+					attachedFiles: attachedFiles && attachedFiles.length > 0 ? attachedFiles : undefined,
+					images: images && images.length > 0 ? images.map((i) => ({ mimeType: i.mimeType, data: i.data, name: i.name })) : undefined,
+					isQueued: true,
+				});
+				this.provider.updateMessages();
+				return;
+			}
 			runtime = await this.provider.newSession();
 		}
 		if (!runtime || !runtime.acpClient.sessionId) {
@@ -171,12 +190,9 @@ export class WebviewMessageHandler {
 
 		// User message
 		if (opts?.preQueued) {
-			for (let i = runtime.messages.length - 1; i >= 0; i--) {
-				const m = runtime.messages[i];
-				if (m.role === 'user' && m.isQueued) {
-					m.isQueued = false;
-					break;
-				}
+			const queued = opts.queuedMessage ?? runtime.messages.find((m) => m.isQueued);
+			if (queued) {
+				queued.isQueued = false;
 			}
 		} else {
 			runtime.messages.push({
@@ -231,7 +247,9 @@ export class WebviewMessageHandler {
 		runtime.agentRunning = true;
 		runtime.stopped = false;
 		this.provider.sendTabs();
-		this.provider.view?.webview.postMessage({ type: 'updateAgentRunning', running: true });
+		if (this.provider.activeSessionId === runtime.id) {
+			this.provider.view?.webview.postMessage({ type: 'updateAgentRunning', running: true });
+		}
 
 		try {
 			const stopReason = await runtime.acpClient.prompt(blocks);
@@ -257,17 +275,31 @@ export class WebviewMessageHandler {
 			runtime.endStreaming();
 			assistantMsg.isStreaming = false;
 
-			const followUp = !wasStopped ? runtime.consumePendingFollowUp() : null;
-			if (!followUp) {
+			// Dispatch the next queued message (reject follow-up, or an
+			// optimistic message queued during the spawn) as a new turn —
+			// BEFORE `agentRunning=false` is posted, so there's no
+			// lock/unlock flicker. Multiple queued messages drain one per turn.
+			let nextQueued: ChatMessage | null = null;
+			if (!wasStopped) {
+				nextQueued = runtime.consumePendingFollowUp() ?? runtime.messages.find((m) => m.isQueued) ?? null;
+			}
+			if (!nextQueued) {
 				runtime.agentRunning = false;
 				runtime.stopped = false;
-				this.provider.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
+				if (this.provider.activeSessionId === runtime.id) {
+					this.provider.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
+				}
 			}
 			this.provider.sendTabs();
 			this.provider.updateMessages();
 
-			if (followUp) {
-				await this.handleUserMessage(followUp, undefined, undefined, { preQueued: true });
+			if (nextQueued) {
+				const nextText = nextQueued.blocks.find((b) => b.type === 'text')?.content ?? '';
+				await this.handleUserMessage(nextText, nextQueued.attachedFiles, nextQueued.images, {
+					preQueued: true,
+					runtime,
+					queuedMessage: nextQueued,
+				});
 			}
 		}
 	}
