@@ -26,6 +26,19 @@ interface PersistedChatUiState {
 	activeSessionId: string | null;
 }
 
+/**
+ * Per-agent remembered config setup, keyed by mode: which (model, effort) was
+ * last selected with each mode. Applied when the user switches modes — the
+ * agent still picks the default mode/model on session creation.
+ * Persisted in globalState under `exo.lastSetupByMode`.
+ */
+interface LastSetupByMode {
+	[agentId: string]: Record<string, { model: string; effort: string }>;
+}
+
+/** globalState key for `LastSetupByMode`. */
+const LAST_SETUP_BY_MODE_KEY = 'exo.lastSetupByMode';
+
 interface DraftState {
 	text: string;
 	attachedFiles: string[];
@@ -1263,10 +1276,75 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		try {
 			await client.setConfigOption(configId, value);
+			const agentId = this.acpAgentConfig()?.id;
+			if (agentId) {
+				// Mode switch → pull the (model, effort) last used with this mode
+				// (from any session). Best-effort; invalid values are skipped.
+				const { selectors } = buildConfigSelectors(client.configOptions ?? null);
+				const modeSel = selectors.find((s) => s.category === 'mode');
+				if (modeSel && modeSel.id === configId) {
+					await this.applyRememberedSetup(agentId, modeSel.currentValue);
+				}
+				// Snapshot the final state last, so the current mode's record is
+				// never clobbered with the previous mode's (model, effort).
+				this.rememberSetup(agentId);
+			}
 			this.sendConfig();
 		} catch (e) {
 			console.error(`[Exo ACP] selectConfigOption(${configId}) failed:`, e);
 		}
+	}
+
+	/** Snapshot the active session's (mode, model, effort) into lastSetupByMode. */
+	private rememberSetup(agentId: string): void {
+		const client = this.session?.acpClient;
+		if (!client) {
+			return;
+		}
+		const { selectors } = buildConfigSelectors(client.configOptions ?? null);
+		const modeSel = selectors.find((s) => s.category === 'mode');
+		if (!modeSel) {
+			return;
+		}
+		const model = selectors.find((s) => s.category === 'model')?.currentValue ?? '';
+		const effort = selectors.find((s) => s.category === 'thought_level')?.currentValue ?? '';
+		if (!model && !effort) {
+			return;
+		}
+		const map = this.lastSetupByMode();
+		const byMode = map[agentId] ?? (map[agentId] = {});
+		byMode[modeSel.currentValue] = { model, effort };
+		void this.globalState.update(LAST_SETUP_BY_MODE_KEY, map);
+	}
+
+	/** Apply the remembered (model, effort) for a freshly-selected mode (best-effort). */
+	private async applyRememberedSetup(agentId: string, modeId: string): Promise<void> {
+		const client = this.session?.acpClient;
+		if (!client) {
+			return;
+		}
+		const setup = this.lastSetupByMode()[agentId]?.[modeId];
+		if (!setup) {
+			return;
+		}
+		for (const [category, value] of [
+			['model', setup.model],
+			['thought_level', setup.effort],
+		] as const) {
+			if (!value) {
+				continue;
+			}
+			// Re-read options each iteration — setConfigOption returns fresh ones.
+			const sel = buildConfigSelectors(client.configOptions ?? null).selectors.find((s) => s.category === category);
+			if (!sel || !sel.options.some((o) => o.value === value)) {
+				continue;
+			}
+			await client.setConfigOption(sel.id, value);
+		}
+	}
+
+	private lastSetupByMode(): LastSetupByMode {
+		return this.globalState.get<LastSetupByMode>(LAST_SETUP_BY_MODE_KEY) ?? {};
 	}
 
 	/** modeId → stable color index 0..9 (persisted in globalState). */
