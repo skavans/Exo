@@ -728,7 +728,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		const name = formatTerminalName(title);
 		if (terminal.name !== name) {
-			terminal.name = name;
+			try {
+				terminal.name = name;
+			} catch { /* Terminal.name is readonly in some VS Code versions — keep the creation name. */ }
 		}
 	}
 

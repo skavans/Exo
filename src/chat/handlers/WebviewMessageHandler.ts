@@ -185,7 +185,14 @@ export class WebviewMessageHandler {
 				attachedFiles: attachedFiles && attachedFiles.length > 0 ? attachedFiles : undefined,
 				images: images && images.length > 0 ? images.map((i) => ({ mimeType: i.mimeType, data: i.data, name: i.name })) : undefined,
 			});
-			this.provider.ensureSessionTitle(runtime, text);
+			// Title bookkeeping must never swallow the message: the push above
+			// already happened, so any failure here is logged and the message
+			// still gets displayed + sent below.
+			try {
+				this.provider.ensureSessionTitle(runtime, text);
+			} catch (err) {
+				console.error('[Exo] ensureSessionTitle failed (message sent anyway):', err);
+			}
 		}
 		this.provider.updateMessages();
 
