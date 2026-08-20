@@ -221,7 +221,3 @@
 	color: var(--ct-text-secondary);
 	font-style: italic;
 }
-
-.status-icon.status-awaiting_permission {
-	color: var(--ct-status-warning-text, var(--ct-text-muted));
-}

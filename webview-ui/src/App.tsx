@@ -309,7 +309,7 @@ export function App() {
 				if (block.type !== 'activity') continue;
 				for (let k = block.toolCalls.length - 1; k >= 0; k--) {
 					const tc = block.toolCalls[k];
-					if (tc.status === 'awaiting_permission' && tc.permissionRequestId && tc.permissionOptions) {
+					if (tc.permissionRequestId && tc.permissionOptions) {
 						const reject = tc.permissionOptions.find(o => o.kind === 'reject_once') ?? tc.permissionOptions.find(o => o.kind === 'reject_always');
 						if (reject) {
 							return { requestId: tc.permissionRequestId, optionId: reject.optionId };

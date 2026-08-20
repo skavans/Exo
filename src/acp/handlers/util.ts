@@ -42,7 +42,7 @@ export function extractToolText(content: unknown): string | undefined {
  * Apply an upsert patch (ToolCallUpdate) to an existing ToolCallInfo
  * (fields title/kind/locations/content/rawInput). Does NOT touch status — that
  * is the caller's responsibility (onToolCallUpdate maps via mapToolStatus,
- * the permission handler sets 'awaiting_permission').
+ * the permission handler only sets permissionRequestId/options).
  *
  * Kept as a single function so the patch logic isn't duplicated (duplication in
  * the permission handler once dropped rawInput — the "card always shows the

@@ -12,7 +12,8 @@ export interface ToolCallInfo {
 	args: Record<string, unknown>;
 	result?: string;
 	isError?: boolean;
-	status: 'pending' | 'success' | 'error' | 'awaiting_permission' | 'rejected' | 'cancelled';
+	/** ACP execution status (agent-owned) or the client-side finalization after a permission decision. */
+	status: 'pending' | 'success' | 'error' | 'rejected' | 'cancelled';
 	summary: string;
 	/** ACP tool call id (for updates via tool_call_update) */
 	toolCallId?: string;
@@ -22,7 +23,7 @@ export interface ToolCallInfo {
 	locations?: unknown[];
 	/** ACP content-diff block (standard: path/oldText/newText) — for the Diff Editor on edit-permissions. */
 	diffContent?: { path: string; oldText?: string | null; newText: string };
-	/** ACP permission request id (when status=awaiting_permission) — to match the webview's decision */
+	/** ACP permission request id — presence marks a pending approval (renders the card). */
 	permissionRequestId?: string;
 	/** ACP permission options (agent-provided) — render the approval card */
 	permissionOptions?: PermissionOptionInfo[];

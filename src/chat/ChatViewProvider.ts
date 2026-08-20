@@ -766,6 +766,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				this.scheduleReplayUpdate(runtime);
 			},
 			onToolCallCreate: (update) => {
+				// Upsert: the tool call may already be known (request_permission can
+				// arrive before tool_call). Patch it in place — never create a second
+				// object for the same id (that would drop permissionRequestId and
+				// push a duplicate card).
+				const existing = runtime.toolCallInfos.get(update.toolCallId);
+				if (existing) {
+					applyToolCallPatch(existing, update);
+					runtime.maybeSyncPlanFromTool(existing);
+					if (runtime.replaying) {
+						this.scheduleReplayUpdate(runtime);
+					} else {
+						this.updateMessages();
+					}
+					return;
+				}
 				const tc: ToolCallInfo = {
 					name: 'other',
 					args: {},

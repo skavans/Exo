@@ -9,8 +9,11 @@
  *   { outcome: 'cancelled' }            — prompt turn cancelled (session/cancel)
  *
  * The card renders inline in the chat (like a file-edit review card) via
- * ToolCallInfo.status = 'awaiting_permission' + permissionOptions[]. The decision
+ * ToolCallInfo.permissionRequestId + permissionOptions[]. The decision
  * arrives from the webview by postMessage `permissionDecision` and resolves a pending promise.
+ * Note: the card's "pending" state is keyed on permissionRequestId/options, NOT on
+ * ToolCallInfo.status — status stays ACP-owned (pending/in_progress/...) so a
+ * tool_call_update can never hide the card while approval is outstanding.
  *
  * Context (PermissionHandlerContext) provides access to the runtime toolCallInfos
  * map (to update ToolCallInfo by toolCallId), pendingPermissions (requestId → resolve),
@@ -53,7 +56,7 @@ export interface PermissionHandlerContext extends ToolCallRegistryContext {
  *
  * 1. Find (or create) the ToolCallInfo by toolCall.toolCallId.
  * 2. Apply the upsert tool-call patch to ToolCallInfo (title/kind/locations/content/status).
- * 3. Set status = 'awaiting_permission', store permissionOptions + requestId.
+ * 3. Store permissionOptions + requestId — their presence renders the card.
  * 4. Register a pending promise in pendingPermissions.
  * 5. Post updateMessages to the webview → the card renders.
  * 6. Await the decision (via the pending promise) — the webview sends `permissionDecision`.
@@ -80,7 +83,7 @@ export async function handleRequestPermission(
 		tc = {
 			name: 'other',
 			args: {},
-			status: 'awaiting_permission',
+			status: 'pending',
 			summary: params.toolCall.title ?? params.toolCall.kind ?? 'Permission requested',
 			toolCallId,
 		};
@@ -88,9 +91,8 @@ export async function handleRequestPermission(
 		ctx.onToolCallCreated?.(tc);
 	}
 	applyToolCallPatch(tc, params.toolCall);
-	tc.status = 'awaiting_permission';
 
-	// 3. Store options + requestId
+	// 3. Store options + requestId — their presence renders the card.
 	tc.permissionOptions = options;
 	tc.permissionRequestId = requestId;
 

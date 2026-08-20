@@ -364,13 +364,6 @@ function StatusBadge({ status }: { status: ToolCallInfo['status'] }) {
 						<line x1="11.5" y1="4.5" x2="4.5" y2="11.5" />
 					</svg>
 				);
-			case 'awaiting_permission':
-				return (
-					<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M8 1.5l5 2v4c0 3.4-2.1 6.2-5 7-2.9-.8-5-3.6-5-7v-4l5-2z" />
-					<path d="M5.5 8l2 2 3-3.5" opacity="0.7" />
-					</svg>
-				);
 			case 'rejected':
 				return (
 					<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
@@ -449,9 +442,10 @@ function ActivityBar({ activity, isStreaming, isLast }: { activity: ActivityBloc
 	const hasReasoning = !!reasoning;
 	const reasoningActive = !!activity.reasoningActive;
 
-		// Permission cards stand alone — everything else goes into the bar
-	const cardCalls = toolCalls.filter(tc => tc.status === 'awaiting_permission');
-	const barCalls = toolCalls.filter(tc => tc.status !== 'awaiting_permission');
+	// Permission cards stand alone — keyed on a pending request, NOT on status
+	// (status stays ACP-owned: a tool_call_update can't hide the card mid-approval).
+	const cardCalls = toolCalls.filter(tc => tc.permissionRequestId && tc.permissionOptions);
+	const barCalls = toolCalls.filter(tc => !tc.permissionRequestId || !tc.permissionOptions);
 
 	// Group barCalls by tool name
 	const groups = useMemo(() => {
