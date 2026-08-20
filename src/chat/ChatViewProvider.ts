@@ -44,7 +44,7 @@ const MAX_RECENT_SESSIONS = 10;
 /** Poll interval for discovering the agent-generated session title via `session/list`. */
 const TITLE_POLL_INTERVAL_MS = 5000;
 /** Give up discovering a real title after this long (agent may not title sessions). */
-const TITLE_POLL_MAX_MS = 60000;
+const TITLE_POLL_MAX_MS = 300000;
 /** Client-side fallback title: first message line, clamped. */
 const FALLBACK_TITLE_MAX_LEN = 48;
 /** Default agent titles (e.g. opencode's) — not real, don't read them back. */
@@ -280,9 +280,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		} catch (err) {
 			console.error('[Exo] worktree creation failed, using shared root:', err);
 		}
-		const sessionId = `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 		try {
-			const runtime = await this.spawnSession(sessionId, cwd, 'new');
+			const runtime = await this.spawnSession('', cwd, 'new');
 			this.finishSessionOpen(runtime, 'New Chat');
 		} catch (err) {
 			console.error('[Exo ACP] newSession failed:', err);
@@ -472,7 +471,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			return Promise.reject(new Error('No ACP agent configured in config.yml (expected agents[0])'));
 		}
 
-		const runtime = new SessionRuntime(sessionId, cwd, this.buildRuntimeCallbacks(sessionId));
+		const runtime: SessionRuntime = new SessionRuntime(sessionId, cwd, this.buildRuntimeCallbacks(() => runtime.id));
 		runtime.acpClient = new AcpClient(cfg, this.buildAcpCallbacks(runtime));
 
 		return (async () => {
@@ -490,6 +489,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			} else {
 				throw new Error('Agent cannot load or resume sessions');
 			}
+			runtime.id = runtime.acpClient.sessionId ?? sessionId;
 			return runtime;
 		})();
 	}
@@ -508,37 +508,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.sendSessionList();
 	}
 
-	private buildRuntimeCallbacks(sessionId: string): SessionRuntimeCallbacks {
+	private buildRuntimeCallbacks(getId: () => string): SessionRuntimeCallbacks {
 		return {
 			sendPlan: () => {
-				if (this._activeSessionId !== sessionId) return;
+				if (this._activeSessionId !== getId()) return;
 				this.view?.webview.postMessage({ type: 'updatePlan', plan: this.currentPlan });
 			},
 			sendMessages: () => this.updateMessages(),
 			sendTokenUsage: () => {
-				if (this._activeSessionId !== sessionId) return;
-				this.sendTokenUsageFor(sessionId);
+				if (this._activeSessionId !== getId()) return;
+				this.sendTokenUsageFor(getId());
 			},
 			sendConfig: () => this.sendConfig(),
 			sendCommands: () => {
-				if (this._activeSessionId !== sessionId) return;
-				this.sendAvailableCommandsFor(sessionId);
+				if (this._activeSessionId !== getId()) return;
+				this.sendAvailableCommandsFor(getId());
 			},
 			sendTabs: () => this.sendTabs(),
 			sendAgentRunning: (running: boolean) => {
-				if (this._activeSessionId !== sessionId) return;
+				if (this._activeSessionId !== getId()) return;
 				this.view?.webview.postMessage({ type: 'updateAgentRunning', running });
 			},
-			isActive: () => this._activeSessionId === sessionId,
+			isActive: () => this._activeSessionId === getId(),
 			sendStreamChunk: (index, blocks) => {
-				if (this._activeSessionId !== sessionId) return;
-				this.view?.webview.postMessage({ type: 'streamChunk', sessionId, index, blocks });
+				if (this._activeSessionId !== getId()) return;
+				this.view?.webview.postMessage({ type: 'streamChunk', sessionId: getId(), index, blocks });
 			},
 		};
 	}
 
 	private buildAcpCallbacks(runtime: SessionRuntime): AcpClientCallbacks {
-		const sessionId = runtime.id;
 		return {
 			onAgentMessageChunk: (_msgId, content) => {
 				if (content.type !== 'text') return;
@@ -641,7 +640,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			},
 			onSessionInfoUpdate: (title, updatedAt) => {
 				if (title) {
-					this.applySessionTitle(sessionId, title, updatedAt ? new Date(updatedAt).getTime() : undefined);
+					this.applySessionTitle(runtime.id, title, updatedAt ? new Date(updatedAt).getTime() : undefined);
 					if (!isPlaceholderTitle(title)) {
 						this.stopTitlePolling(runtime);
 					}
@@ -656,10 +655,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				cancelAllPermissions(this.permissionContext(runtime));
 				runtime.isStreaming = false;
 				runtime.agentRunning = false;
-				if (this.sessions.get(sessionId) === runtime) {
-					this.sessions.delete(sessionId);
+				if (this.sessions.get(runtime.id) === runtime) {
+					this.sessions.delete(runtime.id);
 				}
-				if (this._activeSessionId === sessionId) {
+				if (this._activeSessionId === runtime.id) {
 					this.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
 				}
 				this.sendTabs();
@@ -696,21 +695,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	 * On the first real user message: if the session still carries a generic
 	 * title, show a client-side fallback (start of the message) and start
 	 * polling `session/list` so a real agent-generated title can replace it.
+	 * Re-start polling on later messages if the previous window expired
+	 * (agents generate titles lazily — the first window may be too short).
 	 */
 	public ensureSessionTitle(runtime: SessionRuntime, messageText: string): void {
-		if (runtime.titlePollStarted || this.sessions.get(runtime.id) !== runtime) {
+		if (this.sessions.get(runtime.id) !== runtime) {
 			return;
 		}
-		const fallback = isPlaceholderTitle(runtime.title) ? makeFallbackTitle(messageText) : '';
-		if (fallback) {
-			this.applySessionTitle(runtime.id, fallback);
+		if (!runtime.titlePollStarted) {
+			const fallback = isPlaceholderTitle(runtime.title) ? makeFallbackTitle(messageText) : '';
+			if (fallback) {
+				this.applySessionTitle(runtime.id, fallback);
+			}
 		}
 		if (runtime.acpClient.canList) {
 			this.startTitlePolling(runtime);
 		}
 	}
 
-	/** Poll `session/list` every 5s (max 1 min) until a real title appears. */
+	/** Poll `session/list` every 5s (max 5 min) until a real title appears. */
 	private startTitlePolling(runtime: SessionRuntime): void {
 		if (runtime.titlePollTimer || !runtime.acpClient.canList) {
 			return;

@@ -42,7 +42,7 @@ export interface SessionRuntimeCallbacks {
 }
 
 export class SessionRuntime {
-	readonly id: string;
+	id: string;
 	readonly cwd: string;
 	readonly files = new Files();
 	/** Set by ChatViewProvider.spawnSession after construction (callbacks need the runtime). */
