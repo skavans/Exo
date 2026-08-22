@@ -210,8 +210,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	/** Open tabs (persistent). Order matters (left→right). */
 	private _tabList: TabEntry[] = [];
 
-	/** Next ordinal session number to hand out (monotonic; resets when no tabs are open). */
+	/**
+	 * Next ordinal session number to hand out — a monotonic high-water mark.
+	 * Freed numbers are reused first (see `_freeNumbers`), so the counter itself
+	 * only grows; it is re-seeded from persisted state on restore.
+	 */
 	private _nextSessionNumber = 1;
+
+	/**
+	 * Session numbers whose owning tab/registry/draft/runtime/terminal/worktree
+	 * are all gone. Reused by new sessions before `_nextSessionNumber` is
+	 * bumped. A number enters this set ONLY after its full teardown, so the
+	 * client-owned tab id `exo-<N>` can never collide with a live entity.
+	 */
+	private _freeNumbers = new Set<number>();
 
 	/** Recent-sessions registry (persistent) — drives the "+" menu. */
 	private _sessionRegistry = new Map<string, SessionRegistryEntry>();
@@ -585,6 +597,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				// The worktree owns the number (first free `exo-<N>` on disk):
 				// align the session badge/terminal with the folder/branch name.
 				if (wt.number !== pending.number) {
+					// The provisional number was never claimed by a real session —
+					// return it so the allocator doesn't lose it.
+					this.freeNumber(pending.number);
 					pending.number = wt.number;
 					this._nextSessionNumber = Math.max(this._nextSessionNumber, wt.number + 1);
 					this.sendTabs();
@@ -683,6 +698,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			pending.cancelled = true;
 			this._pendingSessions.delete(tabId);
 			this._drafts.delete(tabId);
+			// A `new` pending never became a session — return its number.
+			if (pending.mode === 'new') {
+				this.freeNumber(pending.number);
+			}
 		}
 
 		// Optimistic: remove the tab from the UI immediately.
@@ -730,12 +749,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			pending.cancelled = true;
 			this._pendingSessions.delete(tabId);
 			this._drafts.delete(tabId);
+			// A `new` pending never resolved into a real session — its number
+			// was provisionally allocated and is now free again.
+			if (pending.mode === 'new') {
+				this.freeNumber(pending.number);
+			}
 		}
 
 		const entry = this._sessionRegistry.get(tabId);
 		const listEntry = this._tabList.find((t) => t.tabId === tabId);
 		const cwd = listEntry?.cwd ?? entry?.cwd;
 		const agentSessionId = listEntry?.agentSessionId ?? entry?.agentSessionId ?? '';
+		// The number the deleted session owns; freed once the teardown below is done.
+		const freedNumber = sessionNumberFromTabId(tabId);
 
 		// Only our own worktrees are ever removed; the shared root never is.
 		const isWorktree = !!cwd && cwd !== this.getWorkspaceRoot() && isExoWorktreePath(cwd);
@@ -782,37 +808,43 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 		// Background: delete on the agent + remove the worktree folder.
 		void (async () => {
-			this.disposeSessionTerminal(tabId);
-			const runtime = this.sessions.get(tabId);
 			try {
-				if (runtime) {
-					try {
-						if (runtime.acpClient.canDelete) {
-							await runtime.acpClient.deleteSession(runtime.agentSessionId);
-						}
-					} finally {
-						try { runtime.acpClient.disconnect(); } catch { /* ignore */ }
-						this.stopTitlePolling(runtime);
-						this.sessions.delete(tabId);
-					}
-				} else if (cwd && agentSessionId) {
-					await this.deleteSessionViaTempAgent(agentSessionId, cwd);
-				}
-			} catch (err) {
-				console.error('[Exo ACP] deleteSession failed (session may persist on agent):', err);
-				vscode.window.showWarningMessage('Exo: failed to delete the session on the agent.');
-			}
-			if (cwd && cwd !== this.getWorkspaceRoot()) {
+				this.disposeSessionTerminal(tabId);
+				const runtime = this.sessions.get(tabId);
 				try {
-					const removed = await removeWorktree(cwd, { confirmed });
-					if (!removed) {
-						vscode.window.showWarningMessage(
-							'Exo: the session\'s worktree was kept — it may contain uncommitted changes (nothing was force-deleted).',
-						);
+					if (runtime) {
+						try {
+							if (runtime.acpClient.canDelete) {
+								await runtime.acpClient.deleteSession(runtime.agentSessionId);
+							}
+						} finally {
+							try { runtime.acpClient.disconnect(); } catch { /* ignore */ }
+							this.stopTitlePolling(runtime);
+							this.sessions.delete(tabId);
+						}
+					} else if (cwd && agentSessionId) {
+						await this.deleteSessionViaTempAgent(agentSessionId, cwd);
 					}
 				} catch (err) {
-					console.error('[Exo] worktree removal failed:', err);
+					console.error('[Exo ACP] deleteSession failed (session may persist on agent):', err);
+					vscode.window.showWarningMessage('Exo: failed to delete the session on the agent.');
 				}
+				if (cwd && cwd !== this.getWorkspaceRoot()) {
+					try {
+						const removed = await removeWorktree(cwd, { confirmed });
+						if (!removed) {
+							vscode.window.showWarningMessage(
+								'Exo: the session\'s worktree was kept — it may contain uncommitted changes (nothing was force-deleted).',
+							);
+						}
+					} catch (err) {
+						console.error('[Exo] worktree removal failed:', err);
+					}
+				}
+			} finally {
+				// Every reference to `exo-<N>` (tabs/registry/draft/runtime/terminal/worktree)
+				// is gone now — the number may be handed to a fresh session.
+				this.freeNumber(freedNumber);
 			}
 		})();
 	}
@@ -861,6 +893,33 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	// --- Pending (in-flight create/load) sessions ---
 
 	/**
+	 * Allocate the next ordinal session number: smallest freed number first
+	 * (compact, so badges/terminals don't keep climbing), else the monotonic
+	 * counter. The ONLY mint site for fresh session numbers (`load` reuses a
+	 * persisted entry's number without going through here).
+	 */
+	private takeNumber(): number {
+		if (this._freeNumbers.size > 0) {
+			let best = Infinity;
+			for (const n of this._freeNumbers) {
+				if (n < best) {
+					best = n;
+				}
+			}
+			this._freeNumbers.delete(best);
+			return best;
+		}
+		return this._nextSessionNumber++;
+	}
+
+	/** Return `n` to the free pool — call only once every reference to `exo-<N>` is gone. */
+	private freeNumber(n: number): void {
+		if (n > 0) {
+			this._freeNumbers.add(n);
+		}
+	}
+
+	/**
 	 * Start an in-flight session op: show a loading tab + the pending view
 	 * immediately, resolve it when the real runtime exists. `new` sessions are
 	 * optimistic — an empty chat + input is shown and messages typed meanwhile
@@ -873,7 +932,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			title,
 			mode,
 			agentSessionId: mode === 'load' ? agentSessionId ?? null : null,
-			number: number ?? this._nextSessionNumber++,
+			number: number ?? this.takeNumber(),
 			prevActiveId: prevActiveId ?? null,
 			cancelled: false,
 			queuedMessages: [],
@@ -952,6 +1011,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this._pendingSessions.delete(pending.id);
 		this._drafts.delete(pending.id);
 		this.disposeSessionTerminal(pending.id);
+		// A `new` pending never became a session — its number is free again.
+		// (`load` numbers belong to persisted entries and must be kept.)
+		if (pending.mode === 'new') {
+			this.freeNumber(pending.number);
+		}
 		if (pending.cancelled) {
 			return;
 		}
@@ -2019,14 +2083,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 					.map((e) => [e.tabId, e]),
 			);
 		}
-		// Numbers are monotonic across ALL persisted state (tabs + registry), so
-		// a fresh session's `exo-<N>` tab id can never collide with an existing
-		// entry — tab ids are client-owned and must stay unique.
-		const maxNumber = Math.max(
+		// Numbers stay unique across ALL persisted state (tabs + registry), so a
+		// fresh session's `exo-<N>` tab id can never collide with an existing
+		// entry — tab ids are client-owned and must stay unique. Every number
+		// below the high-water mark that no persisted entry holds is free, so
+		// after a restart deleted numbers are immediately reusable again.
+		const persistedNumbers = [
 			...this._tabList.map((t) => t.number),
 			...[...this._sessionRegistry.values()].map((e) => sessionNumberFromTabId(e.tabId)),
-			0,
-		);
+		];
+		const maxNumber = Math.max(...persistedNumbers, 0);
+		const used = new Set(persistedNumbers);
+		this._freeNumbers.clear();
+		for (let n = 1; n <= maxNumber; n++) {
+			if (!used.has(n)) {
+				this._freeNumbers.add(n);
+			}
+		}
 		this._nextSessionNumber = maxNumber + 1;
 	}
 

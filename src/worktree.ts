@@ -120,11 +120,23 @@ async function usedWorktreeNumbers(root: string): Promise<Set<number>> {
 	return numbers;
 }
 
+/** True when a local branch `exo-<N>` exists (even with no worktree folder — a deleted session's branch may linger when unmerged). */
+async function worktreeBranchExists(root: string, number: number): Promise<boolean> {
+	try {
+		await runGit(['show-ref', '--verify', '--quiet', `refs/heads/exo-${number}`], root);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 /**
  * Create a worktree for a new session. Worktrees live inside the repo under
  * `.exo/worktrees/exo-<N>` (branch `exo-<N>`, local-only, never pushed), `N`
  * being the first free number on disk — so the folder/branch name always
  * matches the session's ordinal number (`exo-<N>` terminal, header badge).
+ * "Free" means no `exo-<N>` worktree folder AND no lingering `exo-<N>` branch
+ * (a deleted session's unmerged branch may outlive its folder).
  * Being a child of the trusted repo root keeps them workspace-trusted when the
  * Explorer follows the active session. Returns null when not a git repository
  * (shared root).
@@ -135,7 +147,7 @@ export async function createWorktree(root: string): Promise<WorktreeInfo | null>
 	}
 	const used = await usedWorktreeNumbers(root);
 	let number = 1;
-	while (used.has(number)) {
+	while (used.has(number) || (await worktreeBranchExists(root, number))) {
 		number++;
 	}
 	const name = `exo-${number}`;
