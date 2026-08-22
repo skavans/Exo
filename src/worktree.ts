@@ -211,10 +211,55 @@ export async function sessionHasUncommittedWork(worktreePath: string): Promise<b
 export async function removeWorktree(worktreePath: string): Promise<boolean> {
 	try {
 		await runGit(['worktree', 'remove', '--force', worktreePath], worktreePath);
+		// Drop the now-unlinked branch too. Safe: `-d` only deletes when the
+		// branch is fully merged (or via its upstream) — otherwise it fails and
+		// the branch stays.
+		const branch = path.basename(worktreePath);
+		try {
+			await runGit(['branch', '-d', branch], path.dirname(worktreePath));
+		} catch {
+			// branch unmerged or already gone — keep it.
+		}
 		return true;
 	} catch (err) {
 		console.error('[Exo worktree] remove failed:', err);
 		return false;
+	}
+}
+
+export type MergeWorktreeStatus =
+	| { status: 'clean-merged' }
+	| { status: 'merged-dirty' }
+	| { status: 'uncommitted' }
+	| { status: 'conflict'; detail: string };
+
+/**
+ * Merge the worktree's branch into the repository's main branch. The agent
+ * runs in a linked worktree where `main` is checked out in the primary
+ * worktree, so `git checkout main` is impossible there — the host performs the
+ * merge where main is checked out (the root worktree). Only commits are moved:
+ * uncommitted files in the worktree don't block the merge. Idempotent —
+ * returns `clean-merged` when the branch is already fully in main.
+ */
+export async function mergeWorktreeToMain(worktreePath: string, root: string): Promise<MergeWorktreeStatus> {
+	try {
+		const main = await resolveMainBranch(worktreePath);
+		if (!main) {
+			return { status: 'conflict', detail: 'main branch is not resolvable' };
+		}
+		const ahead = parseInt((await runGit(['rev-list', '--count', `${main}..HEAD`], worktreePath)).trim(), 10);
+		if (ahead === 0) {
+			return (await hasUncommittedChanges(worktreePath)) ? { status: 'uncommitted' } : { status: 'clean-merged' };
+		}
+		const branch = path.basename(worktreePath);
+		try {
+			await runGit(['merge', '--no-edit', branch], root);
+		} catch (err) {
+			return { status: 'conflict', detail: err instanceof Error ? err.message : String(err) };
+		}
+		return (await hasUncommittedChanges(worktreePath)) ? { status: 'merged-dirty' } : { status: 'clean-merged' };
+	} catch (err) {
+		return { status: 'conflict', detail: err instanceof Error ? err.message : String(err) };
 	}
 }
 

@@ -95,10 +95,12 @@ const FALLBACK_TITLE_MAX_LEN = 48;
 const DEFAULT_TITLE_PATTERN = /^(New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /**
- * User-message sent by the "commit & merge to main" button. Kept terse — the
- * agent generates the commit message itself, in the conversation's language.
+ * User-message sent by the "commit & merge to main" button. The agent only
+ * commits — the merge into main is performed host-side afterwards (the agent
+ * can't switch to `main` from a linked worktree). The agent picks the commit
+ * message, in the conversation's language.
  */
-const COMMIT_AND_MERGE_PROMPT = 'Commit all your changes and merge them into the main branch.';
+const COMMIT_AND_MERGE_PROMPT = 'Commit all your changes with a descriptive commit message. Do not switch branches or merge — Exo merges your branch into main.';
 
 /**
  * Terminal ANSI color keys, ordered exactly like `MODE_COLORS` in
@@ -1595,9 +1597,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/**
 	 * "Commit & merge to main" button: instruct the active agent (as a normal
-	 * user message) to commit its work and merge the worktree branch into main.
-	 * Host-side git is intentionally avoided — the agent picks the commit
-	 * message in the conversation's language. The button is gated on
+	 * user message) to commit its work; the merge of the worktree branch into
+	 * main is then performed host-side (see `mergeWorktreeToMain`) because the
+	 * agent can't switch to `main` from a linked worktree. The agent picks the
+	 * commit message in the conversation's language. The button is gated on
 	 * `canMerge` (see `refreshMergeState`), so it only fires when there is
 	 * unmerged work.
 	 */

@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import type { ContentBlock } from '@agentclientprotocol/sdk';
 import type { ChatMessage } from '../types';
 import { StreamThrottle } from '../StreamThrottle';
-import { sessionHasUncommittedWork } from '../../worktree';
+import { mergeWorktreeToMain } from '../../worktree';
 
 /**
  * WebviewMessageHandler — thin handlers for the ACP client.
@@ -165,7 +165,8 @@ export class WebviewMessageHandler {
 	 * `isQueued` in history). `opts.runtime` — dispatch to a specific runtime
 	 * even if the user navigated away while it was still spawning.
 	 * `opts.mergeIntent` — this turn was triggered by the "commit & merge to
-	 * main" button; verify afterwards that the work actually landed on main.
+	 * main" button; after the turn the host merges the worktree branch into
+	 * main and reports the outcome.
 	 */
 	public async handleUserMessage(
 		text: string,
@@ -302,14 +303,40 @@ export class WebviewMessageHandler {
 				}
 				// Turn ended — refresh the "commit & merge" button state.
 				this.provider.refreshMergeState();
-				// Merge-triggered turn: warn if work still didn't land on main.
+				// Merge-triggered turn: merge the session's branch into main
+				// host-side (the agent can't switch to `main` from a linked
+				// worktree) and report the outcome.
 				if (opts?.mergeIntent && runtime.cwd !== this.provider.getWorkspaceRoot()) {
-					void sessionHasUncommittedWork(runtime.cwd).then(
-						(dirty) => {
-							if (dirty) {
-								vscode.window.showWarningMessage(
-									'Exo: changes were not merged into main — the session still has uncommitted work.',
-								);
+					void mergeWorktreeToMain(runtime.cwd, this.provider.getWorkspaceRoot()).then(
+						(res) => {
+							// Button state above was computed before the merge.
+							this.provider.refreshMergeState();
+							switch (res.status) {
+								case 'clean-merged':
+									void vscode.window
+										.showInformationMessage(
+											'Exo: changes merged into main. Delete the session branch and worktree?',
+											'Delete',
+										)
+										.then((choice) => {
+											if (choice === 'Delete') {
+												void this.provider.deleteSession(runtime.id);
+											}
+										});
+									break;
+								case 'merged-dirty':
+									vscode.window.showInformationMessage(
+										'Exo: changes merged into main, but the session still has uncommitted files.',
+									);
+									break;
+								case 'uncommitted':
+									vscode.window.showWarningMessage(
+										'Exo: changes were not merged into main — the session still has uncommitted work.',
+									);
+									break;
+								case 'conflict':
+									vscode.window.showWarningMessage(`Exo: could not merge into main — ${res.detail}`);
+									break;
 							}
 						},
 						() => { /* best-effort check */ },
