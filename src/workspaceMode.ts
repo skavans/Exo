@@ -5,18 +5,19 @@
  * window is already a multi-root workspace (a `.code-workspace` is open). The
  * catch: the extension host may be restarted when the FIRST workspace folder
  * (`workspace.rootPath`) is added/removed/changed. So Exo keeps `folders[0]`
- * a stable, empty folder that NEVER changes and swaps only `folders[1]`:
+ * the repo ROOT — the main worktree — and never changes it; the active
+ * session's worktree is the only folder ever swapped:
  *
- *     [ <root>/.exo/workspace-stable , <active folder> ]
- *                 index 0                      index 1
+ *     [ <root> ]                     — idle (Explorer shows only the root)
+ *     [ <root> , <root>/.exo/worktrees/exo-N ]   — active session
+ *                 index 0                          index 1
  *
- * `rootPath` therefore never moves, and session switches stay reload-free.
+ * `folders[0]` therefore never moves, and session switches stay reload-free.
+ * When nothing is open the second folder is dropped, leaving just `[root]`.
  *
- * The stable folder lives INSIDE the repo (child of the trusted root) — a
- * sibling/cache folder would be untrusted and drop the window into Restricted
- * Mode the moment it's added as a workspace folder. Worktrees live under
- * `<root>/.exo/worktrees/` (also trusted children); `.exo/` is hidden from git
- * via `info/exclude`.
+ * The root is the repo the user opened, so it is already workspace-trusted;
+ * worktrees live under `<root>/.exo/worktrees/` (children of the trusted root,
+ * so they stay trusted) and `.exo/` is hidden from git via `info/exclude`.
  *
  * User-owned multi-root workspaces are never touched: every operation is
  * guarded on "is this OUR managed workspace file AND our folder shape". The
@@ -30,10 +31,6 @@ import * as vscode from 'vscode';
 import { ensureGitExclude } from './worktree';
 
 export const EXO_DIR_NAME = '.exo';
-/** The stable, never-changing first workspace folder (empty dir inside the repo). */
-const STABLE_FOLDER_DIR = 'workspace-stable';
-/** Display name of the stable folder in the Explorer (dot-name reads as hidden/internal). */
-const STABLE_FOLDER_NAME = '.exo';
 /** globalState key for the pinned repo root. */
 const WORKSPACE_ROOT_KEY = 'exo.workspaceRoot';
 
@@ -52,19 +49,9 @@ export function managedWorkspacePath(root: string): string {
 	return path.join(root, EXO_DIR_NAME, workspaceFileName(root));
 }
 
-/** Absolute path of the stable (index 0) workspace folder for `root`. */
-export function stableWorkspacePath(root: string): string {
-	return path.join(root, EXO_DIR_NAME, STABLE_FOLDER_DIR);
-}
-
 /** True when a path is inside the repo under `.exo/worktrees/` (a session worktree). */
 export function isExoWorktreePath(p: string): boolean {
 	return p.includes(path.sep + EXO_DIR_NAME + path.sep + 'worktrees' + path.sep);
-}
-
-/** True when a path is the stable workspace folder (never adopt it as the root). */
-export function isExoStablePath(p: string): boolean {
-	return p.includes(path.sep + EXO_DIR_NAME + path.sep + STABLE_FOLDER_DIR);
 }
 
 function isPathInside(child: string, parent: string): boolean {
@@ -74,8 +61,8 @@ function isPathInside(child: string, parent: string): boolean {
 
 /**
  * True when the window is open on OUR managed workspace file AND has our
- * folder shape `[stable, root | worktree]`. User-owned multi-root workspaces
- * never match.
+ * folder shape: `[root]` (idle) or `[root, root | worktree]` (active session).
+ * User-owned multi-root workspaces never match.
  */
 export function isManagedWorkspace(root: string): boolean {
 	const wsFile = vscode.workspace.workspaceFile;
@@ -83,11 +70,14 @@ export function isManagedWorkspace(root: string): boolean {
 		return false;
 	}
 	const folders = vscode.workspace.workspaceFolders;
-	if (!folders || folders.length !== 2 || folders[0].uri.fsPath !== stableWorkspacePath(root)) {
+	if (!folders || folders.length === 0 || folders.length > 2 || folders[0].uri.fsPath !== root) {
 		return false;
 	}
-	const second = folders[1].uri.fsPath;
-	return second === root || isPathInside(second, root);
+	if (folders.length === 2) {
+		const second = folders[1].uri.fsPath;
+		return second === root || isPathInside(second, root);
+	}
+	return true;
 }
 
 /** Persisted pinned repo root (survives the migration reload; machine-scoped). */
@@ -102,20 +92,17 @@ export function pinRoot(globalState: vscode.Memento, root: string): void {
 }
 
 /**
- * Write the managed `.code-workspace` file (`[stable, root]`) and reopen the
- * SAME window on it. This is the one-time reload that unlocks reload-free
- * folder switching afterwards. Caller must `pinRoot` first.
+ * Write the managed `.code-workspace` file (`[root]` only — the worktree is
+ * added/removed live) and reopen the SAME window on it. This is the one-time
+ * reload that unlocks reload-free folder switching afterwards. Caller must
+ * `pinRoot` first.
  */
 export async function enterManagedWorkspace(root: string): Promise<void> {
 	const wsPath = managedWorkspacePath(root);
 	await fs.promises.mkdir(path.dirname(wsPath), { recursive: true });
-	await fs.promises.mkdir(stableWorkspacePath(root), { recursive: true });
 	const content = JSON.stringify(
 		{
-			folders: [
-				{ path: stableWorkspacePath(root), name: STABLE_FOLDER_NAME },
-				{ path: root },
-			],
+			folders: [{ path: root }],
 		},
 		null,
 		'\t',
@@ -130,12 +117,13 @@ export async function enterManagedWorkspace(root: string): Promise<void> {
  * Serialized, coalescing driver for `updateWorkspaceFolders`. The API forbids
  * calling it again before `onDidChangeWorkspaceFolders` fires, so switches are
  * queued; rapid session clicks collapse onto the latest target. Only index 1
- * (the active folder) is ever swapped — `folders[0]` stays the stable folder,
- * so `workspace.rootPath` never changes and the extension host is not restarted.
+ * (the active session's worktree) is ever added/removed/swapped — `folders[0]`
+ * stays the root, so `workspace.rootPath` never changes and the extension host
+ * is not restarted.
  */
 export class WorkspaceFolderSwitcher {
 	private _inFlight = false;
-	private _pendingTarget: string | null = null;
+	private _pending: { root: string; target: string } | null = null;
 	private _timer: ReturnType<typeof setTimeout> | null = null;
 
 	/** Feed from `vscode.workspace.onDidChangeWorkspaceFolders`. */
@@ -157,44 +145,65 @@ export class WorkspaceFolderSwitcher {
 		if (cwd !== root && !isPathInside(cwd, root)) {
 			return;
 		}
-		if (this.isCurrent(cwd)) {
+		if (this.isCurrent(root, cwd)) {
 			return;
 		}
-		this._pendingTarget = cwd;
+		this._pending = { root, target: cwd };
 		this._drain();
 	}
 
-	/** The Explorer should show the pinned root (no active session). */
+	/** The Explorer should show only the pinned root (no active session). */
 	public showRoot(root: string): void {
 		this.follow(root, root);
 	}
 
-	/** True when `folders[1]` is already `fsPath` (and the shape is ours). */
-	private isCurrent(fsPath: string): boolean {
+	/** True when the workspace already shows `target`: root-only shape for the root, `folders[1]` for a worktree. */
+	private isCurrent(root: string, target: string): boolean {
 		const folders = vscode.workspace.workspaceFolders;
-		return !!folders && folders.length === 2 && folders[1].uri.fsPath === fsPath;
+		if (!folders || folders.length === 0 || folders.length > 2 || folders[0].uri.fsPath !== root) {
+			return false;
+		}
+		if (target === root) {
+			return folders.length === 1;
+		}
+		return folders.length === 2 && folders[1].uri.fsPath === target;
 	}
 
 	private _drain(): void {
 		if (this._inFlight) {
 			return;
 		}
-		const target = this._pendingTarget;
-		if (!target) {
+		const pending = this._pending;
+		if (!pending) {
 			return;
 		}
-		this._pendingTarget = null;
-		if (this.isCurrent(target)) {
+		this._pending = null;
+		if (this.isCurrent(pending.root, pending.target)) {
 			return;
 		}
 		const folders = vscode.workspace.workspaceFolders;
-		if (!folders || folders.length !== 2) {
+		if (!folders || folders.length === 0 || folders.length > 2 || folders[0].uri.fsPath !== pending.root) {
 			// Shape broken (user changed the workspace) — don't touch it.
 			return;
 		}
 		this._inFlight = true;
 		try {
-			const ok = vscode.workspace.updateWorkspaceFolders(1, 1, { uri: vscode.Uri.file(target) });
+			let ok: boolean;
+			if (pending.target === pending.root && folders.length === 1) {
+				// Nothing to change (isCurrent should have caught this).
+				this._inFlight = false;
+				this._drain();
+				return;
+			} else if (pending.target === pending.root) {
+				// Show root: drop the second folder.
+				ok = vscode.workspace.updateWorkspaceFolders(1, 1);
+			} else if (folders.length === 1) {
+				// Insert the worktree as the second folder.
+				ok = vscode.workspace.updateWorkspaceFolders(1, 0, { uri: vscode.Uri.file(pending.target) });
+			} else {
+				// Replace folders[1] with the newly active worktree.
+				ok = vscode.workspace.updateWorkspaceFolders(1, 1, { uri: vscode.Uri.file(pending.target) });
+			}
 			if (!ok) {
 				this._inFlight = false;
 				this._drain();

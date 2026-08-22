@@ -22,7 +22,6 @@ import {
 	WorkspaceFolderSwitcher,
 	enterManagedWorkspace,
 	getPinnedRoot,
-	isExoStablePath,
 	isExoWorktreePath,
 	pinRoot,
 } from '../workspaceMode';
@@ -216,7 +215,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		const folders = vscode.workspace.workspaceFolders;
 		if (folders && folders.length > 0) {
 			const first = folders[0].uri.fsPath;
-			if (!isExoWorktreePath(first) && !isExoStablePath(first)) {
+			if (!isExoWorktreePath(first)) {
 				return first;
 			}
 		}
@@ -225,17 +224,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/**
 	 * Resolve the repo root for session cwds. Adopts the current first
-	 * workspace folder as the root — EXCEPT when it is a session worktree or the
-	 * stable `.exo` folder (a managed workspace opens with `folders[0]`
-	 * = the stable folder), in which case the pinned root (set during the
-	 * one-time migration, before the reload) is used. This keeps the pin from
-	 * leaking across projects. Requires loaded mementos.
+	 * workspace folder as the root — EXCEPT when it is a session worktree (a
+	 * legacy managed workspace could open with `folders[0]` = a worktree), in
+	 * which case the pinned root (set during the one-time migration, before the
+	 * reload) is used. This keeps the pin from leaking across projects. Requires
+	 * loaded mementos.
 	 */
 	private resolveWorkspaceRoot(): string {
 		const folders = vscode.workspace.workspaceFolders;
 		if (folders && folders.length > 0) {
 			const first = folders[0].uri.fsPath;
-			if (!isExoWorktreePath(first) && !isExoStablePath(first)) {
+			if (!isExoWorktreePath(first)) {
 				pinRoot(this.globalState, first);
 				return first;
 			}
