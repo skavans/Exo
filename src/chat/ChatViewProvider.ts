@@ -57,8 +57,10 @@ interface PersistedChatUiState {
 
 /**
  * Per-agent remembered config setup, keyed by mode: which (model, effort) was
- * last selected with each mode. Applied when the user switches modes — the
- * agent still picks the default mode/model on session creation.
+ * last selected with each mode. The agent always picks the default MODE itself
+ * (on session creation and on load/resume); the remembered (model, effort) is
+ * applied to whatever mode ends up active — both on a fresh session and when
+ * the user switches modes by hand.
  * Persisted in globalState under `exo.lastSetupByMode`.
  */
 interface LastSetupByMode {
@@ -234,6 +236,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	private _autoAllowPermissions = false;
 	private _readyHandled = false;
+
+	/**
+	 * True while a config setup is being applied (mode switch cascade or the
+	 * remembered (model, effort) restore on session create). While set, agent
+	 * `config_option_update` pushes skip their `sendConfig` — only the final
+	 * state is broadcast, so the selectors never flicker through intermediate
+	 * values.
+	 */
+	private _applyingConfig = false;
 
 	/** Per-session input drafts, keyed by session id (or `pending-<n>` while spawning). */
 	private _drafts = new Map<string, DraftState>();
@@ -953,13 +964,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	/** Render the pending session in the webview (chat view for `new`, loading view for `load`). */
 	private postPendingView(pending: PendingSession): void {
 		if (pending.mode === 'new') {
-			this.view?.webview.postMessage({ type: 'showChat', sessionId: pending.id, messages: this.messages, plan: null });
+			this.view?.webview.postMessage({ type: 'showChat', sessionId: pending.id, messages: this.messages, plan: null, configPending: true });
 			// Never let a stale `agentRunning` from the previous session disable the input.
 			this.view?.webview.postMessage({ type: 'updateAgentRunning', running: false });
 			// A fresh session starts with an empty draft (not the previous session's text).
 			this.postDraftState();
 		} else {
-			this.view?.webview.postMessage({ type: 'showChatLoading', sessionId: pending.id, title: pending.title, mode: 'load' });
+			this.view?.webview.postMessage({ type: 'showChatLoading', sessionId: pending.id, title: pending.title, mode: 'load', configPending: true });
 		}
 	}
 
@@ -1053,6 +1064,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			await runtime.acpClient.connect(cwd);
 			if (mode === 'new') {
 				await runtime.acpClient.sessionNew(cwd);
+				// The agent picked the default mode (usually "plan") — restore the
+				// (model, effort) the user last used with this mode, if any. Runs
+				// before the session becomes visible, so the pending-view skeletons
+				// hide the apply and the selectors appear already configured.
+				const agentId = cfg.id;
+				if (agentId) {
+					const { currentModeId } = buildConfigSelectors(runtime.acpClient.configOptions ?? null, runtime.acpClient.clientSelection);
+					if (currentModeId) {
+						this._applyingConfig = true;
+						try {
+							await this.applyRememberedSetup(runtime.acpClient, agentId, currentModeId);
+						} catch (e) {
+							console.error('[Exo ACP] restoring remembered setup failed:', e);
+						} finally {
+							this._applyingConfig = false;
+						}
+					}
+				}
 			} else if (runtime.acpClient.canLoadSession) {
 				this.startReplay(runtime);
 				await runtime.acpClient.sessionLoad(agentSessionId ?? '', cwd);
@@ -1297,7 +1326,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				runtime.callbacks.sendConfig();
 			},
 			onConfigOptionUpdate: () => {
-				runtime.callbacks.sendConfig();
+				if (!this._applyingConfig) {
+					runtime.callbacks.sendConfig();
+				}
 			},
 			onAvailableCommandsUpdate: (commands) => {
 				runtime.availableCommands = commands;
@@ -1507,6 +1538,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			sessionId: runtime.id,
 			messages: runtime.messages,
 			plan: runtime.currentPlan,
+			configPending: false,
 		});
 		this.sendAgentInfo();
 		this.sendConfig();
@@ -1649,6 +1681,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		if (!client) {
 			return;
 		}
+		this._applyingConfig = true;
 		try {
 			await client.setConfigOption(configId, value);
 			const agentId = this.acpAgentConfig()?.id;
@@ -1658,15 +1691,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				const { selectors } = buildConfigSelectors(client.configOptions ?? null, client.clientSelection);
 				const modeSel = selectors.find((s) => s.category === 'mode');
 				if (modeSel && modeSel.id === configId) {
-					await this.applyRememberedSetup(agentId, modeSel.currentValue);
+					await this.applyRememberedSetup(client, agentId, modeSel.currentValue);
 				}
 				// Snapshot the final state last, so the current mode's record is
 				// never clobbered with the previous mode's (model, effort).
 				this.rememberSetup(agentId);
 			}
-			this.sendConfig();
 		} catch (e) {
 			console.error(`[Exo ACP] selectConfigOption(${configId}) failed:`, e);
+		} finally {
+			this._applyingConfig = false;
+			this.sendConfig();
 		}
 	}
 
@@ -1692,12 +1727,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		void this.globalState.update(LAST_SETUP_BY_MODE_KEY, map);
 	}
 
-	/** Apply the remembered (model, effort) for a freshly-selected mode (best-effort). */
-	private async applyRememberedSetup(agentId: string, modeId: string): Promise<void> {
-		const client = this.session?.acpClient;
-		if (!client) {
-			return;
-		}
+	/**
+	 * Apply the remembered (model, effort) for a given mode on a given client.
+	 * Used both when the user switches modes in a live session and on session
+	 * create, where the agent picked the default mode. Best-effort: values that
+	 * are empty or no longer present in the fresh `configOptions` are skipped;
+	 * values already set are not re-sent.
+	 */
+	private async applyRememberedSetup(client: AcpClient, agentId: string, modeId: string): Promise<void> {
 		const setup = this.lastSetupByMode()[agentId]?.[modeId];
 		if (!setup) {
 			return;
@@ -1712,6 +1749,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			// Re-read options each iteration — setConfigOption returns fresh ones.
 			const sel = buildConfigSelectors(client.configOptions ?? null, client.clientSelection).selectors.find((s) => s.category === category);
 			if (!sel || !sel.options.some((o) => o.value === value)) {
+				continue;
+			}
+			if (sel.currentValue === value) {
 				continue;
 			}
 			await client.setConfigOption(sel.id, value);

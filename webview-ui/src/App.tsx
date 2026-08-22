@@ -40,6 +40,9 @@ export function App() {
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [messages, setMessages] = useState<ChatMessage[]>([]);
 	const [config, setConfig] = useState<ConfigState | null>(null);
+	// True while the active session's agent is still connecting and its config
+	// (mode/model/effort selectors) hasn't arrived yet — shows skeleton chips.
+	const [configPending, setConfigPending] = useState(false);
 	const [plan, setPlan] = useState<Plan | null>(null);
 	const [tokenUsage, setTokenUsage] = useState<{ prompt_tokens: number } | null>(null);
 	const [tokenLimit, setTokenLimit] = useState<number | null>(null);
@@ -137,6 +140,7 @@ export function App() {
 					break;
 				case 'updateConfig': {
 					setConfig(message as ConfigState);
+					setConfigPending(false);
 					break;
 				}
 				case 'updatePlan':
@@ -171,6 +175,7 @@ export function App() {
 						setTokenLimit(null);
 						setChatLoading(null);
 						setCanMerge(false);
+						setConfigPending(false);
 					}
 					break;
 				}
@@ -193,6 +198,7 @@ export function App() {
 						title: (message.title as string | undefined) ?? '',
 						mode: message.mode === 'new' ? 'new' : 'load',
 					});
+					setConfigPending(true);
 					break;
 				}
 				case 'showChat': {
@@ -207,6 +213,7 @@ export function App() {
 					setConfigRequired(false);
 					setWorkspaceModeRequired(false);
 					setChatLoading(null);
+					setConfigPending(Boolean(message.configPending));
 					break;
 				}
 				case 'showEmpty': {
@@ -220,6 +227,7 @@ export function App() {
 					setConfigRequired(false);
 					setWorkspaceModeRequired(false);
 					setChatLoading(null);
+					setConfigPending(false);
 					break;
 				}
 				case 'showSessionPicker': {
@@ -388,8 +396,10 @@ export function App() {
 					{plan && <TodoList plan={plan} />}
 					<MessageInput
 						onSend={handleSend}
+						sessionId={activeSessionId}
 						commands={commands}
 						config={config}
+						configPending={configPending}
 						onSelectConfigOption={handleSelectConfigOption}
 						isAgentRunning={isAgentRunning}
 						autoAllowPermissions={autoAllowPermissions}

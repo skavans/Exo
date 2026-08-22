@@ -59,6 +59,49 @@
 	opacity: 0.72;
 }
 
+/* Pulsing placeholder chips shown while the agent's config
+   (mode/model/effort) hasn't arrived yet — mirrors the selector layout. */
+@keyframes ct-skeleton-pulse {
+	0%, 100% { opacity: 0.45; }
+	50% { opacity: 0.9; }
+}
+
+.config-skeleton {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+	height: calc(var(--ct-text-xs) * var(--ct-lh-tight) + var(--ct-space-2xs) * 2 + 2px);
+	padding: 0 var(--ct-space-sm);
+	background: var(--ct-bg-input);
+	border: 1px dashed var(--ct-border-focus);
+	border-radius: var(--ct-radius-sm);
+	color: var(--ct-text-muted);
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-xs);
+	font-weight: 500;
+	line-height: var(--ct-lh-tight);
+	white-space: nowrap;
+	animation: ct-skeleton-pulse 1.4s ease-in-out infinite;
+	pointer-events: none;
+	user-select: none;
+	flex-shrink: 0;
+}
+
+.config-skeleton.variant-mode {
+	font-weight: 600;
+	padding-left: var(--ct-space-xs);
+}
+
+.config-skeleton-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	display: inline-block;
+	background: var(--ct-accent);
+	opacity: 0.55;
+}
+
 .controls-spacer {
 	flex: 1;
 	min-width: var(--ct-space-sm);

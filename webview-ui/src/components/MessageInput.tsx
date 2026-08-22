@@ -26,8 +26,11 @@ function safeFuzzyMatch(query: string, target: string): FuzzyMatch {
 
 interface Props {
 	onSend: (text: string, attachedFiles?: string[], images?: AttachedImage[]) => void;
+	sessionId?: string;
 	commands: CommandInfo[];
 	config: ConfigState | null;
+	/** True while the agent is connecting and its config hasn't arrived yet. */
+	configPending?: boolean;
 	onSelectConfigOption: (configId: string, value: string) => void;
 	isAgentRunning?: boolean;
 	autoAllowPermissions: boolean;
@@ -38,7 +41,7 @@ interface Props {
 	pendingReject?: { requestId: string; optionId: string } | null;
 }
 
-export function MessageInput({ onSend, commands, config, onSelectConfigOption, isAgentRunning, autoAllowPermissions, onToggleAutoAllowPermissions, onStop, canPromptImage, canMerge, pendingReject }: Props) {
+export function MessageInput({ onSend, sessionId, commands, config, configPending, onSelectConfigOption, isAgentRunning, autoAllowPermissions, onToggleAutoAllowPermissions, onStop, canPromptImage, canMerge, pendingReject }: Props) {
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const [text, setText] = useState('');
 
@@ -370,6 +373,19 @@ export function MessageInput({ onSend, commands, config, onSelectConfigOption, i
 		return () => document.removeEventListener('click', handler);
 	}, []);
 
+	// Re-focus the input whenever the session changes (new session, pending
+	// resolve, tab switch) so the user can type immediately. rAF defers past
+	// the render; a disabled textarea (agent running) is left alone.
+	useEffect(() => {
+		const raf = requestAnimationFrame(() => {
+			const ta = textareaRef.current;
+			if (ta && !ta.disabled) {
+				ta.focus({ preventScroll: true });
+			}
+		});
+		return () => cancelAnimationFrame(raf);
+	}, [sessionId]);
+
 	useEffect(() => {
 		const handler = (e: Event) => {
 			const detail = (e as CustomEvent<{ text: string; attachedFiles: string[] }>).detail;
@@ -659,35 +675,46 @@ export function MessageInput({ onSend, commands, config, onSelectConfigOption, i
 				)}
 					<span class="auto-allow-lock-label">{autoAllowPermissions ? 'auto' : 'safe'}</span>
 				</button>
-				{modeSelector && (
-					<ConfigDropdown
-						selector={modeSelector}
-						modeColorIndex={config?.modeColorIndex ?? {}}
-						onSelect={onSelectConfigOption}
-						disabled={!!isAgentRunning}
-						accent={activeModeColor}
-						variant="mode"
-					/>
-				)}
-				{leftSelectors.map((sel) => (
-					<ConfigDropdown
-						key={sel.id}
-						selector={sel}
-						modeColorIndex={{}}
-						onSelect={onSelectConfigOption}
-						disabled={!!isAgentRunning}
-						variant={sel.category === 'model' ? 'model' : 'plain'}
-					/>
-				))}
-				{thoughtSelector && <div class="controls-spacer" />}
-				{thoughtSelector && (
-					<ConfigDropdown
-						selector={thoughtSelector}
-						modeColorIndex={{}}
-						onSelect={onSelectConfigOption}
-						disabled={!!isAgentRunning}
-						variant="plain"
-					/>
+				{configPending || !config ? (
+					<>
+						<ConfigSkeleton label="Mode" mode />
+						<ConfigSkeleton label="Model" />
+						<div class="controls-spacer" />
+						<ConfigSkeleton label="Effort" />
+					</>
+				) : (
+					<>
+						{modeSelector && (
+							<ConfigDropdown
+								selector={modeSelector}
+								modeColorIndex={config?.modeColorIndex ?? {}}
+								onSelect={onSelectConfigOption}
+								disabled={!!isAgentRunning}
+								accent={activeModeColor}
+								variant="mode"
+							/>
+						)}
+						{leftSelectors.map((sel) => (
+							<ConfigDropdown
+								key={sel.id}
+								selector={sel}
+								modeColorIndex={{}}
+								onSelect={onSelectConfigOption}
+								disabled={!!isAgentRunning}
+								variant={sel.category === 'model' ? 'model' : 'plain'}
+							/>
+						))}
+						{thoughtSelector && <div class="controls-spacer" />}
+						{thoughtSelector && (
+							<ConfigDropdown
+								selector={thoughtSelector}
+								modeColorIndex={{}}
+								onSelect={onSelectConfigOption}
+								disabled={!!isAgentRunning}
+								variant="plain"
+							/>
+						)}
+					</>
 				)}
 			</div>
 		</div>
@@ -749,6 +776,16 @@ function Highlighted({ text, indices }: { text: string; indices: number[] }) {
 /* ============================================================
    ConfigDropdown — a reusable selector (mode/model/thought)
    ============================================================ */
+
+/** Pulsing placeholder shown while the agent's config hasn't arrived yet. */
+function ConfigSkeleton({ label, mode }: { label: string; mode?: boolean }) {
+	return (
+		<span class={`config-skeleton${mode ? ' variant-mode' : ''}`} title={label} aria-hidden="true">
+			{mode && <span class="config-skeleton-dot" />}
+			{label}
+		</span>
+	);
+}
 
 interface DropdownProps {
 	selector: ConfigSelector;
