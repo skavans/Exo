@@ -8,6 +8,7 @@ import { TodoList } from './components/TodoList';
 import { SessionHeader } from './components/SessionHeader';
 import { ChatLoading } from './components/ChatLoading';
 import { ConfigRequired } from './components/ConfigRequired';
+import { WorkspaceModeRequired } from './components/WorkspaceModeRequired';
 import { resolveThemeId, setTheme, getThemeVersion, type ThemeKind } from './shiki';
 
 function readThemeKind(): ThemeKind {
@@ -51,6 +52,7 @@ export function App() {
 	const [themeVersion, setThemeVersion] = useState(() => getThemeVersion());
 	const [configRequired, setConfigRequired] = useState(false);
 	const [configPath, setConfigPath] = useState<string | null>(null);
+	const [workspaceModeRequired, setWorkspaceModeRequired] = useState(false);
 	const [canMerge, setCanMerge] = useState(false);
 
 	// Guard against streamChunk for a session that isn't the active one.
@@ -186,6 +188,7 @@ export function App() {
 					setTokenLimit(null);
 					setCanMerge(false);
 					setConfigRequired(false);
+					setWorkspaceModeRequired(false);
 					setChatLoading({
 						title: (message.title as string | undefined) ?? '',
 						mode: message.mode === 'new' ? 'new' : 'load',
@@ -202,6 +205,7 @@ export function App() {
 					setTokenLimit(null);
 					setCanMerge(false);
 					setConfigRequired(false);
+					setWorkspaceModeRequired(false);
 					setChatLoading(null);
 					break;
 				}
@@ -214,6 +218,7 @@ export function App() {
 					setTokenLimit(null);
 					setCanMerge(false);
 					setConfigRequired(false);
+					setWorkspaceModeRequired(false);
 					setChatLoading(null);
 					break;
 				}
@@ -223,7 +228,16 @@ export function App() {
 				}
 				case 'showConfigRequired': {
 					setConfigRequired(true);
+					setWorkspaceModeRequired(false);
 					setConfigPath(typeof message.configPath === 'string' ? message.configPath : null);
+					setActiveSessionId(null);
+					setChatLoading(null);
+					setCanMerge(false);
+					break;
+				}
+				case 'showWorkspaceModeRequired': {
+					setWorkspaceModeRequired(true);
+					setConfigRequired(false);
 					setActiveSessionId(null);
 					setChatLoading(null);
 					setCanMerge(false);
@@ -304,6 +318,10 @@ export function App() {
 
 	if (configRequired) {
 		return <ConfigRequired configPath={configPath} />;
+	}
+
+	if (workspaceModeRequired) {
+		return <WorkspaceModeRequired />;
 	}
 
 	const activeModeColor = useActiveModeColor(config);

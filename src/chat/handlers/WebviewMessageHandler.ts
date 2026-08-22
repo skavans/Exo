@@ -84,6 +84,10 @@ export class WebviewMessageHandler {
 				void vscode.commands.executeCommand('exo.openConfig');
 				break;
 			}
+			case 'enterWorkspaceMode': {
+				void this.provider.enterWorkspaceMode();
+				break;
+			}
 			case 'updateDraftState': {
 				const text = typeof message.text === 'string' ? message.text : '';
 				const attachedFiles = Array.isArray(message.attachedFiles)

@@ -20,11 +20,10 @@ import { applyToolCallPatch, type EditSpec } from '../acp/handlers/util';
 import { createWorktree, isGitRepository, registerWorktreeInScm, removeWorktree, sessionHasUncommittedWork } from '../worktree';
 import {
 	WorkspaceFolderSwitcher,
-	dismissWorkspaceModePrompt,
 	enterManagedWorkspace,
 	getPinnedRoot,
+	isExoStablePath,
 	isExoWorktreePath,
-	isWorkspaceModePromptDismissed,
 	pinRoot,
 } from '../workspaceMode';
 import { StreamThrottle } from './StreamThrottle';
@@ -207,7 +206,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		const folders = vscode.workspace.workspaceFolders;
 		if (folders && folders.length > 0) {
 			const first = folders[0].uri.fsPath;
-			if (!isExoWorktreePath(first)) {
+			if (!isExoWorktreePath(first) && !isExoStablePath(first)) {
 				return first;
 			}
 		}
@@ -216,17 +215,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/**
 	 * Resolve the repo root for session cwds. Adopts the current first
-	 * workspace folder as the root — EXCEPT when it is a session worktree (a
-	 * managed workspace may reopen on the last active session's folder), in
-	 * which case the pinned root (set during the one-time migration, before the
-	 * reload) is used. This keeps the pin from leaking across projects. Requires
-	 * loaded mementos.
+	 * workspace folder as the root — EXCEPT when it is a session worktree or the
+	 * stable `.exo` folder (a managed workspace opens with `folders[0]`
+	 * = the stable folder), in which case the pinned root (set during the
+	 * one-time migration, before the reload) is used. This keeps the pin from
+	 * leaking across projects. Requires loaded mementos.
 	 */
 	private resolveWorkspaceRoot(): string {
 		const folders = vscode.workspace.workspaceFolders;
 		if (folders && folders.length > 0) {
 			const first = folders[0].uri.fsPath;
-			if (!isExoWorktreePath(first)) {
+			if (!isExoWorktreePath(first) && !isExoStablePath(first)) {
 				pinRoot(this.globalState, first);
 				return first;
 			}
@@ -393,46 +392,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	/**
-	 * One-time onboarding: in a single-folder window, offer reopening the
-	 * project as the managed Exo workspace — the prerequisite for reload-free
-	 * Explorer-follow (see workspaceMode.ts). Prompted on extension activation.
+	 * True when the window must be opened as the managed Exo workspace before
+	 * any session UI is shown: a single-folder, trusted, git window that is not
+	 * already our `.code-workspace`. Deliberately NOT dismissible — the webview
+	 * renders a blocking screen with a single "switch" action (see
+	 * WorkspaceModeRequired). Non-git folders, user-owned multi-root workspaces
+	 * and untrusted windows are structurally exempt (nothing to follow / cannot
+	 * be made trustworthy).
 	 */
-	public async maybePromptWorkspaceMode(): Promise<void> {
+	public async isWorkspaceModeRequired(): Promise<boolean> {
 		try {
 			const folders = vscode.workspace.workspaceFolders;
 			if (!folders || folders.length !== 1 || vscode.workspace.workspaceFile) {
-				return; // empty window or already a workspace (ours or the user's)
+				return false; // empty window or already a workspace (ours or the user's)
 			}
 			if (!vscode.workspace.isTrusted) {
-				return;
-			}
-			if (isWorkspaceModePromptDismissed(this.globalState)) {
-				return;
-			}
-			if (!vscode.workspace.getConfiguration('exo').get<boolean>('followSessionFolder', true)) {
-				return;
+				return false;
 			}
 			if (folders[0].uri.fsPath !== this._workspaceRoot) {
-				return;
+				return false;
 			}
-			if (!(await isGitRepository(this._workspaceRoot))) {
-				return;
-			}
-			const choice = await vscode.window.showInformationMessage(
-				'Exo: чтобы Explorer автоматически следовал за активной сессией, открой проект как воркспейс Exo.',
-				'Переоткрыть как воркспейс Exo',
-				'Не сейчас',
-				'Больше не спрашивать',
-			);
-			if (choice === 'Переоткрыть как воркспейс Exo') {
-				// Pin BEFORE the reload — workspaceState dies with the workspace id.
-				pinRoot(this.globalState, this._workspaceRoot);
-				await enterManagedWorkspace(this._workspaceRoot);
-			} else if (choice === 'Больше не спрашивать') {
-				dismissWorkspaceModePrompt(this.globalState);
-			}
+			return await isGitRepository(this._workspaceRoot);
 		} catch (err) {
-			console.error('[Exo] workspace mode prompt failed:', err);
+			console.error('[Exo] workspace-mode check failed:', err);
+			return false;
+		}
+	}
+
+	/** The webview must render the blocking workspace-mode screen (no chat UI). */
+	private showWorkspaceModeRequired(): void {
+		this._activeSessionId = null;
+		this.persistUiStateSoon();
+		this.view?.webview.postMessage({ type: 'showWorkspaceModeRequired' });
+	}
+
+	/** Blocking-screen button: pin the root, then migrate to the managed workspace. */
+	public async enterWorkspaceMode(): Promise<void> {
+		try {
+			// Pin BEFORE the reload — workspaceState dies with the workspace id.
+			pinRoot(this.globalState, this._workspaceRoot);
+			await enterManagedWorkspace(this._workspaceRoot);
+		} catch (err) {
+			console.error('[Exo] enter workspace mode failed:', err);
+			vscode.window.showErrorMessage('Exo: failed to open the Exo workspace.');
 		}
 	}
 
@@ -446,6 +448,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.postDraftState();
 		if (!this.configWatcher.config.agents?.length) {
 			this.showConfigRequired();
+			return;
+		}
+		if (await this.isWorkspaceModeRequired()) {
+			this.showWorkspaceModeRequired();
 			return;
 		}
 		try {
