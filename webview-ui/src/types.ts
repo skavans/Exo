@@ -60,7 +60,7 @@ export interface TabInfo {
 	status: TabStatus;
 	/** Per-session color index 0..9 (host-computed, maps to MODE_COLORS). */
 	colorIndex: number;
-	/** Ordinal session number — matches the terminal name `exo: #N`. */
+	/** Ordinal session number — matches the terminal name `exo-<N>`. */
 	number?: number;
 }
 

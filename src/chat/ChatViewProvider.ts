@@ -124,9 +124,9 @@ function sessionColorNumber(number: number): number {
 	return Math.max(0, number - 1) % SESSION_COLOR_KEYS.length;
 }
 
-/** Terminal label: `exo: #N` — the session's ordinal number (matches the header badge). */
+/** Terminal label: `exo-<N>` — the session's ordinal number (matches the header badge). */
 function formatTerminalName(number: number): string {
-	return `exo: #${number}`;
+	return `exo-${number}`;
 }
 
 /**
@@ -491,6 +491,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			if (wt) {
 				cwd = wt.path;
 				void registerWorktreeInScm(cwd);
+				// The worktree owns the number (first free `exo-<N>` on disk):
+				// align the session badge/terminal with the folder/branch name.
+				if (wt.number !== pending.number) {
+					pending.number = wt.number;
+					this._nextSessionNumber = Math.max(this._nextSessionNumber, wt.number + 1);
+					this.sendTabs();
+				}
 			}
 		} catch (err) {
 			console.error('[Exo] worktree creation failed, using shared root:', err);
@@ -885,7 +892,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	/**
-	 * Create a terminal named `exo: #N` rooted in `cwd` (worktree). Created
+	 * Create a terminal named `exo-<N>` rooted in `cwd` (worktree). Created
 	 * hidden and transient: it only surfaces when the user is in the terminal
 	 * panel, and is never resurrected after a VS Code restart.
 	 */

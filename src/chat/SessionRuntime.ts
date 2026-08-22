@@ -52,7 +52,7 @@ export class SessionRuntime {
 	/** Display title (agent-owned, from session_info_update). */
 	title = '';
 
-	/** Ordinal session number — matches the terminal label `exo: #N` and the header badge. */
+	/** Ordinal session number — matches the terminal name `exo-<N>` and the header badge. */
 	number = 0;
 
 	// --- Messages / tool calls ---

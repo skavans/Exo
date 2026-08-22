@@ -6,8 +6,11 @@
  * freshly created worktree (own folder + local-only branch). When it isn't,
  * sessions share the workspace root (no isolation).
  *
- * Worktrees live INSIDE the repo at `.exo/worktrees/<slug>` (not as a sibling
- * as before). That keeps them under the trusted repo root: VS Code's workspace
+ * Worktrees live INSIDE the repo at `.exo/worktrees/exo-<N>` (not as a sibling
+ * as before), `N` being the session's ordinal number — the same one used for the
+ * terminal name (`exo-<N>`), the header badge and the folder/branch name, so
+ * they all read identically. That keeps them under the trusted repo root: VS
+ * Code's workspace
  * trust is path-based and parent-inclusive, so the managed Exo workspace can
  * switch the Explorer folder to a session's worktree without dropping the
  * window into Restricted Mode. `.exo/` is hidden from git via `info/exclude`
@@ -26,6 +29,8 @@ export interface WorktreeInfo {
 	path: string;
 	/** Local branch the worktree was created on (never pushed). */
 	branch: string;
+	/** Ordinal number `N` — the worktree dir/branch is `exo-<N>`. */
+	number: number;
 }
 
 function runGit(args: string[], cwd: string): Promise<string> {
@@ -95,27 +100,54 @@ export async function ensureGitExclude(root: string): Promise<void> {
 	}
 }
 
+/** Parse `.exo/worktrees/exo-<N>` dir names into their numbers. */
+async function usedWorktreeNumbers(root: string): Promise<Set<number>> {
+	const numbers = new Set<number>();
+	try {
+		const entries = await fs.promises.readdir(path.join(root, '.exo', 'worktrees'), { withFileTypes: true });
+		for (const entry of entries) {
+			if (!entry.isDirectory()) {
+				continue;
+			}
+			const m = /^exo-(\d+)$/.exec(entry.name);
+			if (m) {
+				numbers.add(Number(m[1]));
+			}
+		}
+	} catch {
+		// `.exo/worktrees/` doesn't exist yet — nothing used.
+	}
+	return numbers;
+}
+
 /**
  * Create a worktree for a new session. Worktrees live inside the repo under
- * `.exo/worktrees/<slug>` (branch `exo/<slug>`, local-only). Being a child of
- * the trusted repo root keeps them workspace-trusted when the Explorer follows
- * the active session. Returns null when not a git repository (shared root).
+ * `.exo/worktrees/exo-<N>` (branch `exo-<N>`, local-only, never pushed), `N`
+ * being the first free number on disk — so the folder/branch name always
+ * matches the session's ordinal number (`exo-<N>` terminal, header badge).
+ * Being a child of the trusted repo root keeps them workspace-trusted when the
+ * Explorer follows the active session. Returns null when not a git repository
+ * (shared root).
  */
 export async function createWorktree(root: string): Promise<WorktreeInfo | null> {
 	if (!(await isGitRepository(root))) {
 		return null;
 	}
-	const slug = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-	const branch = `exo/${slug}`;
-	const target = path.join(root, '.exo', 'worktrees', slug);
+	const used = await usedWorktreeNumbers(root);
+	let number = 1;
+	while (used.has(number)) {
+		number++;
+	}
+	const name = `exo-${number}`;
+	const target = path.join(root, '.exo', 'worktrees', name);
 	try {
 		await ensureGitExclude(root);
-		await runGit(['worktree', 'add', '-b', branch, target], root);
+		await runGit(['worktree', 'add', '-b', name, target], root);
 	} catch (err) {
 		console.error('[Exo worktree] create failed:', err);
 		return null;
 	}
-	return { path: target, branch };
+	return { path: target, branch: name, number };
 }
 
 /** True when the worktree has uncommitted changes (staged, working tree or untracked). */
