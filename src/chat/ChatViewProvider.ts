@@ -68,6 +68,13 @@ interface PendingSession {
 	id: string;
 	title: string;
 	mode: 'new' | 'load';
+	/**
+	 * Session id this op resolves to: the id being opened for `load`, null for
+	 * `new`. If the resolved runtime ends up with a DIFFERENT id (load fell
+	 * back to `new`), the old id's tab/registry entries are replaced by it so
+	 * two session ids can never own the same worktree.
+	 */
+	targetId: string | null;
 	/** Ordinal session number — already assigned at pending time, carried to the runtime. */
 	number: number;
 	/** Session to restore the active view to if this pending operation fails. */
@@ -500,6 +507,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			if (wt) {
 				cwd = wt.path;
 				void registerWorktreeInScm(cwd);
+				// The worktree was (re)created from a free number — any state
+				// entries still pointing at this path reference the previous,
+				// deleted worktree. Drop them so a stale entry can never own
+				// the same path as this fresh session.
+				this.purgeEntriesForPath(cwd);
 				// The worktree owns the number (first free `exo-<N>` on disk):
 				// align the session badge/terminal with the folder/branch name.
 				if (wt.number !== pending.number) {
@@ -539,12 +551,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			this.showSessionRuntime(existing);
 			return;
 		}
+		// Never spawn a second agent for the same session while one is already
+		// in flight (handleReady can fire twice: webview `ready` + config change).
+		for (const p of this._pendingSessions.values()) {
+			if (p.targetId === sessionId) {
+				return;
+			}
+		}
 		// Lazy spawn: recreate the agent process and reload the session.
 		const tab = this._tabList.find((t) => t.sessionId === sessionId);
 		const meta = tab
 			?? { sessionId, title: this._sessionRegistry.get(sessionId)?.title ?? 'Chat', cwd: this._sessionRegistry.get(sessionId)?.cwd };
 		const cwd = meta.cwd ?? this.getWorkspaceRoot();
-		const pending = this.addPendingSession('load', meta.title, this._activeSessionId ?? undefined, tab?.number);
+		const pending = this.addPendingSession('load', meta.title, this._activeSessionId ?? undefined, tab?.number, sessionId);
 		if (cwd !== this.getWorkspaceRoot()) {
 			void registerWorktreeInScm(cwd);
 		}
@@ -619,29 +638,64 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/** Permanently delete a session (from the recent menu). Optimistic UI; worktree handling in background. */
 	public async deleteSession(sessionId: string): Promise<void> {
+		// Cancel an in-flight create/load if its loading tab is deleted.
+		const pending = this._pendingSessions.get(sessionId);
+		if (pending) {
+			pending.cancelled = true;
+			this._pendingSessions.delete(sessionId);
+			this._drafts.delete(sessionId);
+		}
+
 		const entry = this._sessionRegistry.get(sessionId);
 		const listEntry = this._tabList.find((t) => t.sessionId === sessionId);
 		const cwd = listEntry?.cwd ?? entry?.cwd;
 
-		// A git worktree session: warn before destroying work that only lives
-		// here (uncommitted changes or commits absent from main). Non-git
-		// sessions (cwd === workspace root) delete silently.
-		if (cwd && cwd !== this.getWorkspaceRoot()) {
-			try {
-				const dirty = await sessionHasUncommittedWork(cwd);
-				if (dirty) {
-					const choice = await vscode.window.showWarningMessage(
-						'This session has uncommitted changes or commits not in main. Delete the session and its worktree anyway?',
-						{ modal: true },
-						'Delete',
-						'Cancel',
-					);
-					if (choice !== 'Delete') {
-						return;
-					}
+		// Only our own worktrees are ever removed; the shared root never is.
+		const isWorktree = !!cwd && cwd !== this.getWorkspaceRoot() && isExoWorktreePath(cwd);
+		let confirmed = false;
+		let skipWorktree = false;
+
+		if (isWorktree) {
+			// Never delete a worktree that another session still references — a
+			// stale/duplicated id mapping to the same path must not be able to
+			// destroy a live session's work.
+			const otherPaths = new Set<string>();
+			for (const t of this._tabList) {
+				if (t.sessionId !== sessionId && t.cwd) {
+					otherPaths.add(t.cwd);
 				}
-			} catch (err) {
-				console.error('[Exo] worktree dirty-check failed (deleting anyway):', err);
+			}
+			for (const e of this._sessionRegistry.values()) {
+				if (e.sessionId !== sessionId && e.cwd) {
+					otherPaths.add(e.cwd);
+				}
+			}
+			const live = this.session;
+			if (live && live.id !== sessionId && live.cwd) {
+				otherPaths.add(live.cwd);
+			}
+			if (otherPaths.has(cwd)) {
+				skipWorktree = true;
+			} else {
+				// Warn before destroying work that only lives here (uncommitted
+				// changes or commits absent from main).
+				try {
+					const dirty = await sessionHasUncommittedWork(cwd);
+					if (dirty) {
+						const choice = await vscode.window.showWarningMessage(
+							'This session has uncommitted changes or commits not in main. Delete the session and its worktree anyway?',
+							{ modal: true },
+							'Delete',
+							'Cancel',
+						);
+						if (choice !== 'Delete') {
+							return;
+						}
+						confirmed = true;
+					}
+				} catch (err) {
+					console.error('[Exo] worktree dirty-check failed (deleting anyway):', err);
+				}
 			}
 		}
 
@@ -687,9 +741,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				console.error('[Exo ACP] deleteSession failed (session may persist on agent):', err);
 				vscode.window.showWarningMessage('Exo: failed to delete the session on the agent.');
 			}
-			if (cwd && cwd !== this.getWorkspaceRoot()) {
+			if (skipWorktree) {
+				vscode.window.showWarningMessage(
+					`Exo: the worktree ${cwd} is shared with another session — it was NOT deleted (only the session was removed).`,
+				);
+			} else if (cwd && cwd !== this.getWorkspaceRoot()) {
 				try {
-					await removeWorktree(cwd);
+					const removed = await removeWorktree(cwd, { confirmed });
+					if (!removed) {
+						vscode.window.showWarningMessage(
+							'Exo: the session\'s worktree was kept — it may contain uncommitted changes (nothing was force-deleted).',
+						);
+					}
 				} catch (err) {
 					console.error('[Exo] worktree removal failed:', err);
 				}
@@ -747,11 +810,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	 * are queued; `load` sessions keep the full-area loading view (content
 	 * comes from agent replay, nothing to interact with).
 	 */
-	private addPendingSession(mode: 'new' | 'load', title: string, prevActiveId?: string, number?: number): PendingSession {
+	private addPendingSession(mode: 'new' | 'load', title: string, prevActiveId?: string, number?: number, targetId?: string): PendingSession {
 		const pending: PendingSession = {
 			id: `pending-${++this._pendingCounter}`,
 			title,
 			mode,
+			targetId: mode === 'load' ? targetId ?? null : null,
 			number: number ?? this._nextSessionNumber++,
 			prevActiveId: prevActiveId ?? null,
 			cancelled: false,
@@ -797,6 +861,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		// Adopt the number + terminal created during the pending phase.
 		runtime.number = pending.number;
 		this.transferSessionTerminal(pending.id, runtime.id);
+		// A load op resolved to a DIFFERENT session id than requested (the
+		// agent created a new session — e.g. load fell back to new). Replace the
+		// old id everywhere: a worktree must never have two owners, or deleting
+		// one entry would destroy the other session's worktree.
+		if (pending.targetId && pending.targetId !== runtime.id) {
+			this._tabList = this._tabList.filter((t) => t.sessionId !== pending.targetId);
+			this._sessionRegistry.delete(pending.targetId);
+			this._drafts.delete(pending.targetId);
+			this.persistDrafts();
+		}
 		// Optimistic `new`: messages typed during the spawn become the start of
 		// the real session, still rendered `isQueued` until dispatched below.
 		if (pending.queuedMessages.length > 0) {
@@ -898,6 +972,35 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this.sendTabs();
 		this.sendSessionList();
+	}
+
+	/**
+	 * Drop every tab/registry/draft entry referencing `cwd`. Called when a
+	 * fresh worktree is created at that path: the entries can only be orphans
+	 * of a previously deleted worktree (a live worktree's number is never free).
+	 */
+	private purgeEntriesForPath(cwd: string): void {
+		let changed = false;
+		for (const t of [...this._tabList]) {
+			if (t.cwd === cwd) {
+				this._tabList = this._tabList.filter((x) => x !== t);
+				this._drafts.delete(t.sessionId);
+				changed = true;
+			}
+		}
+		for (const [id, e] of [...this._sessionRegistry]) {
+			if (e.cwd === cwd) {
+				this._sessionRegistry.delete(id);
+				changed = true;
+			}
+		}
+		if (changed) {
+			this.persistUiStateSoon();
+			this.persistRegistrySoon();
+			this.persistDrafts();
+			this.sendTabs();
+			this.sendSessionList();
+		}
 	}
 
 	/**
@@ -1905,6 +2008,70 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		const registry = this.workspaceState.get<SessionRegistryEntry[]>('exo.sessionRegistry');
 		if (Array.isArray(registry)) {
 			this._sessionRegistry = new Map(registry.map((e) => [e.sessionId, e]));
+		}
+		this.reconcileSessionPaths();
+	}
+
+	/**
+	 * Repair persisted state that references one worktree path under multiple
+	 * session ids (a corrupted/duplicated state — e.g. a crash between the
+	 * optimistic removal and its debounced persist). Only ONE session may own a
+	 * path; the winner is the active session, then an open tab, then the newest
+	 * registry entry. State only — no worktree is ever touched here.
+	 */
+	private reconcileSessionPaths(): void {
+		type Candidate = { id: string; updatedAt: number; isTab: boolean };
+		const byPath = new Map<string, Candidate[]>();
+		const collect = (id: string, cwd: string, updatedAt: number, isTab: boolean) => {
+			if (!cwd) {
+				return;
+			}
+			const arr = byPath.get(cwd) ?? [];
+			arr.push({ id, updatedAt, isTab });
+			byPath.set(cwd, arr);
+		};
+		for (const t of this._tabList) {
+			collect(t.sessionId, t.cwd, Date.now(), true);
+		}
+		for (const e of this._sessionRegistry.values()) {
+			collect(e.sessionId, e.cwd, e.updatedAt, false);
+		}
+		const keepIds = new Set<string>();
+		for (const arr of byPath.values()) {
+			const distinct = new Set(arr.map((c) => c.id));
+			if (distinct.size <= 1) {
+				keepIds.add(arr[0].id);
+				continue;
+			}
+			arr.sort((a, b) => {
+				const pa = a.id === this._activeSessionId ? 3 : a.isTab ? 2 : 1;
+				const pb = b.id === this._activeSessionId ? 3 : b.isTab ? 2 : 1;
+				if (pa !== pb) {
+					return pb - pa;
+				}
+				return b.updatedAt - a.updatedAt;
+			});
+			keepIds.add(arr[0].id);
+		}
+		let changed = false;
+		this._tabList = this._tabList.filter((t) => {
+			if (keepIds.has(t.sessionId)) {
+				return true;
+			}
+			changed = true;
+			return false;
+		});
+		for (const id of [...this._sessionRegistry.keys()]) {
+			if (!keepIds.has(id)) {
+				this._sessionRegistry.delete(id);
+				this._drafts.delete(id);
+				changed = true;
+			}
+		}
+		if (changed) {
+			this.persistUiStateSoon();
+			this.persistRegistrySoon();
+			this.persistDrafts();
 		}
 	}
 

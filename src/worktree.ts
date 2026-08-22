@@ -236,10 +236,39 @@ export async function sessionHasUncommittedWork(worktreePath: string): Promise<b
 	}
 }
 
-/** Delete the worktree (force — the caller is responsible for dirty state). */
-export async function removeWorktree(worktreePath: string): Promise<boolean> {
+/**
+ * True when a path is inside the repo under `.exo/worktrees/` (a session
+ * worktree created by Exo). Used to refuse removing anything outside our own
+ * layout — a corrupted state must never be able to delete an arbitrary
+ * directory.
+ */
+export function isExoWorktreePath(p: string): boolean {
+	return p.includes(path.sep + '.exo' + path.sep + 'worktrees' + path.sep);
+}
+
+/**
+ * Delete a worktree. Prefers git's own protection: `git worktree remove`
+ * refuses a dirty worktree, so the folder survives unless the caller has
+ * explicit user confirmation (`opts.confirmed`) to force past it. This closes
+ * the race where a live agent writes a file after our dirty check ran, and
+ * the case where the check itself failed silently. Only ever removes
+ * Exo-owned worktrees (under `<root>/.exo/worktrees/`).
+ */
+export async function removeWorktree(worktreePath: string, opts?: { confirmed?: boolean }): Promise<boolean> {
 	try {
-		await runGit(['worktree', 'remove', '--force', worktreePath], worktreePath);
+		if (!isExoWorktreePath(worktreePath)) {
+			console.error('[Exo worktree] refusing to remove non-Exo path:', worktreePath);
+			return false;
+		}
+		try {
+			await runGit(['worktree', 'remove', worktreePath], worktreePath);
+		} catch (err) {
+			if (opts?.confirmed !== true) {
+				console.error('[Exo worktree] remove refused (worktree may be dirty), keeping it:', err);
+				return false;
+			}
+			await runGit(['worktree', 'remove', '--force', worktreePath], worktreePath);
+		}
 		// Drop the now-unlinked branch too. Safe: `-d` only deletes when the
 		// branch is fully merged (or via its upstream) — otherwise it fails and
 		// the branch stays.

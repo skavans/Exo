@@ -28,7 +28,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ensureGitExclude } from './worktree';
+import { ensureGitExclude, isExoWorktreePath } from './worktree';
+
+export { isExoWorktreePath };
 
 export const EXO_DIR_NAME = '.exo';
 /** globalState key for the pinned repo root. */
@@ -47,11 +49,6 @@ function workspaceFileName(root: string): string {
 /** Absolute path of our managed workspace file for `root`. */
 export function managedWorkspacePath(root: string): string {
 	return path.join(root, EXO_DIR_NAME, workspaceFileName(root));
-}
-
-/** True when a path is inside the repo under `.exo/worktrees/` (a session worktree). */
-export function isExoWorktreePath(p: string): boolean {
-	return p.includes(path.sep + EXO_DIR_NAME + path.sep + 'worktrees' + path.sep);
 }
 
 function isPathInside(child: string, parent: string): boolean {
