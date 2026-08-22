@@ -63,6 +63,8 @@ export class WebviewMessageHandler {
 				const sessionId = message.sessionId as string;
 				if (sessionId) {
 					void this.provider.switchSession(sessionId);
+				} else {
+					console.warn('[Exo] dropped switchSession without sessionId', message);
 				}
 				break;
 			}
@@ -70,6 +72,8 @@ export class WebviewMessageHandler {
 				const sessionId = message.sessionId as string;
 				if (sessionId) {
 					void this.provider.closeTab(sessionId);
+				} else {
+					console.warn('[Exo] dropped closeTab without sessionId', message);
 				}
 				break;
 			}
@@ -77,6 +81,8 @@ export class WebviewMessageHandler {
 				const sessionId = message.sessionId as string;
 				if (sessionId) {
 					void this.provider.deleteSession(sessionId);
+				} else {
+					console.warn('[Exo] dropped deleteSession without sessionId', message);
 				}
 				break;
 			}

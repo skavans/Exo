@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { getConfigPath } from '../config';
 import type { ConfigWatcher } from '../configWatcher';
 import type { ChatMessage, PendingPermission, ToolCallInfo } from './types';
@@ -32,6 +33,7 @@ import {
 	enterManagedWorkspace,
 	getPinnedRoot,
 	isExoWorktreePath,
+	managedWorkspacePath,
 	pinRoot,
 } from '../workspaceMode';
 import { StreamThrottle } from './StreamThrottle';
@@ -172,6 +174,11 @@ function tabIdForNumber(number: number): string {
 function sessionNumberFromTabId(tabId: string): number {
 	const n = Number(tabId.replace(/^exo-/, ''));
 	return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** True when `id` is a valid client-owned tab id (`exo-<N>`, N > 0). */
+function isValidTabId(id: unknown): id is string {
+	return typeof id === 'string' && /^exo-[1-9]\d*$/.test(id);
 }
 
 /** Terminal label: `exo-<N>` — the session's ordinal number (matches the header badge and tab id). */
@@ -452,8 +459,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	 */
 	public async isWorkspaceModeRequired(): Promise<boolean> {
 		try {
+			// A window still open on OUR managed `.code-workspace` file whose file
+			// was deleted is broken (no folders, "NO FOLDER OPENED"). Route it
+			// through the blocking screen — its button recreates the file and
+			// reloads the window.
+			const wsFile = vscode.workspace.workspaceFile;
+			if (wsFile && wsFile.scheme === 'file' && wsFile.fsPath === managedWorkspacePath(this._workspaceRoot)) {
+				try {
+					await fs.promises.stat(wsFile.fsPath);
+				} catch {
+					return true;
+				}
+			}
 			const folders = vscode.workspace.workspaceFolders;
-			if (!folders || folders.length !== 1 || vscode.workspace.workspaceFile) {
+			if (!folders || folders.length !== 1 || wsFile) {
 				return false; // empty window or already a workspace (ours or the user's)
 			}
 			if (!vscode.workspace.isTrusted) {
@@ -1963,19 +1982,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private restorePersistedUiState(): void {
 		const persisted = this.workspaceState.get<PersistedChatUiState>('exo.chatUiState');
 		if (persisted && Array.isArray(persisted.tabs)) {
-			this._tabList = persisted.tabs.map((t) => ({
-				tabId: t.tabId,
-				agentSessionId: t.agentSessionId,
-				title: t.title,
-				cwd: t.cwd,
-				number: t.number,
-			}));
-			this._activeSessionId = persisted.activeSessionId;
+			// Only entries with a valid client-owned tab id (`exo-<N>`) are
+			// restored. Anything else (legacy formats, malformed state) is
+			// dropped — an entry without a valid id can never be selected,
+			// closed or deleted, so it must not resurface in the UI.
+			this._tabList = persisted.tabs
+				.filter((t): t is TabEntry => isValidTabId(t.tabId))
+				.map((t) => ({
+					tabId: t.tabId,
+					agentSessionId: typeof t.agentSessionId === 'string' ? t.agentSessionId : '',
+					title: t.title,
+					cwd: t.cwd,
+					number: t.number,
+				}));
+			const active = persisted.activeSessionId;
+			this._activeSessionId =
+				isValidTabId(active) && this._tabList.some((t) => t.tabId === active) ? active : null;
 		}
 		const draft = this.workspaceState.get<Record<string, DraftState>>('exo.chatDraft');
 		if (draft && typeof draft === 'object') {
 			for (const [tabId, entry] of Object.entries(draft)) {
-				if (tabId.startsWith('pending-')) {
+				if (!isValidTabId(tabId)) {
 					continue;
 				}
 				this._drafts.set(tabId, {
@@ -1986,7 +2013,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		const registry = this.workspaceState.get<SessionRegistryEntry[]>('exo.sessionRegistry');
 		if (Array.isArray(registry)) {
-			this._sessionRegistry = new Map(registry.map((e) => [e.tabId, e]));
+			this._sessionRegistry = new Map(
+				registry
+					.filter((e): e is SessionRegistryEntry => isValidTabId(e.tabId))
+					.map((e) => [e.tabId, e]),
+			);
 		}
 		// Numbers are monotonic across ALL persisted state (tabs + registry), so
 		// a fresh session's `exo-<N>` tab id can never collide with an existing
