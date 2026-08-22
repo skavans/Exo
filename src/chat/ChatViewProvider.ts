@@ -72,7 +72,6 @@ const LAST_SETUP_BY_MODE_KEY = 'exo.lastSetupByMode';
 
 interface DraftState {
 	text: string;
-	attachedFiles: string[];
 }
 
 /** Session registry entry (the "recent sessions" menu source). Persistent. Keyed by tab id. */
@@ -1042,7 +1041,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			if (first) {
 				const text = messageText(first);
 				this.ensureSessionTitle(runtime, text);
-				void this._messageHandler.handleUserMessage(text, first.attachedFiles, first.images, {
+				void this._messageHandler.handleUserMessage(text, first.images, {
 					preQueued: true,
 					runtime,
 					queuedMessage: first,
@@ -1921,7 +1920,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			vscode.window.showWarningMessage('Exo: could not determine the repository main branch — merge cancelled.');
 			return;
 		}
-		void this._messageHandler.handleUserMessage(buildCommitAndMergePrompt(main), undefined, undefined, { mergeIntent: true });
+		void this._messageHandler.handleUserMessage(buildCommitAndMergePrompt(main), undefined, { mergeIntent: true });
 	}
 
 	/**
@@ -2076,11 +2075,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	// Draft / persistence
 	// ------------------------------------------------------------------
 
-	public updateDraftState(text: string, attachedFiles: string[]): void {
+	public updateDraftState(text: string): void {
 		if (!this._activeSessionId) {
 			return;
 		}
-		this._drafts.set(this._activeSessionId, { text, attachedFiles: [...attachedFiles] });
+		this._drafts.set(this._activeSessionId, { text });
 		this.persistDrafts();
 	}
 
@@ -2165,7 +2164,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				}
 				this._drafts.set(tabId, {
 					text: entry?.text ?? '',
-					attachedFiles: Array.isArray(entry?.attachedFiles) ? entry.attachedFiles : [],
 				});
 			}
 		}
@@ -2286,7 +2284,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.view?.webview.postMessage({
 			type: 'restoreDraft',
 			text: draft?.text ?? '',
-			attachedFiles: draft?.attachedFiles ?? [],
 		});
 	}
 

@@ -256,6 +256,41 @@ function renderMarkdown(content: string, onClick: (e: MouseEvent) => void, isStr
 }
 
 /* ============================================================
+   Inline user-mention chips
+   ------------------------------------------------------------
+   User messages carry inline mention tokens `@[<path>]` in their
+   text (inserted by the @-picker / file drop). Split the text on
+   tokens and render each as a read-only file chip inline.
+   ============================================================ */
+
+const MENTION_TOKEN = /@\[([^\]]+)\]/g;
+
+function renderUserText(content: string): VNode[] {
+	const nodes: VNode[] = [];
+	let last = 0;
+	let key = 0;
+	let m: RegExpExecArray | null;
+	while ((m = MENTION_TOKEN.exec(content)) !== null) {
+		if (m.index > last) {
+			nodes.push(<span key={key++}>{content.slice(last, m.index)}</span>);
+		}
+		const path = m[1];
+		const fileName = path.split('/').pop() ?? path;
+		nodes.push(
+			<span class="file-chip file-chip-readonly file-chip-inline" key={key++} title={path}>
+				<span class="file-chip-icon">📄</span>
+				<span class="file-chip-name">{fileName}</span>
+			</span>,
+		);
+		last = m.index + m[0].length;
+	}
+	if (last < content.length) {
+		nodes.push(<span key={key++}>{content.slice(last)}</span>);
+	}
+	return nodes.length > 0 ? nodes : [<span key={0}>{content}</span>];
+}
+
+/* ============================================================
    SVG Icons
    ============================================================ */
 
@@ -852,7 +887,7 @@ export const MessageBubble = memo(function MessageBubble({ message, themeVersion
 							return <div key={i} class="error-text">{block.content}</div>;
 						}
 						if (message.role === 'user') {
-							return <div key={i} class="user-text">{block.content}</div>;
+							return <div key={i} class="user-text">{renderUserText(block.content)}</div>;
 						}
 						const isLastAndStreaming = isStreaming && i === lastIndex;
 						return renderMarkdown(block.content, handleContentClick, isLastAndStreaming);
@@ -869,19 +904,6 @@ export const MessageBubble = memo(function MessageBubble({ message, themeVersion
 						<circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="3 3" />
 					</svg>
 					<span>queued</span>
-				</div>
-			)}
-			{message.role === 'user' && message.attachedFiles && message.attachedFiles.length > 0 && (
-				<div class="message-attached-files">
-					{message.attachedFiles.map((filePath) => {
-						const fileName = filePath.split('/').pop()!;
-						return (
-							<span class="file-chip file-chip-readonly" key={filePath} title={filePath}>
-								<span class="file-chip-icon">📄</span>
-								<span class="file-chip-name">{fileName}</span>
-							</span>
-						);
-					})}
 				</div>
 			)}
 			{message.role === 'user' && message.images && message.images.length > 0 && (

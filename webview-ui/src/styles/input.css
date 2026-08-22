@@ -45,17 +45,6 @@
 }
 
 /* ============================================================
-   File Chips (@-mention attached files)
-   ============================================================ */
-
-.file-chips {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--ct-space-xs);
-	padding: 0;
-}
-
-/* ============================================================
    Image Chips (paste/drop images)
    ============================================================ */
 
@@ -137,36 +126,14 @@
 	white-space: nowrap;
 }
 
-.file-chip-remove {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	background: none;
-	border: none;
-	color: var(--ct-icon);
-	cursor: pointer;
-	padding: 0 2px;
-	font-size: var(--ct-text-base);
-	line-height: 1;
-	border-radius: var(--ct-radius-xs);
-	transition: color var(--ct-transition-fast), background var(--ct-transition-fast);
-	margin-left: var(--ct-space-2xs);
-}
-
-.file-chip-remove:hover {
-	color: var(--ct-status-danger);
-	background: var(--ct-status-danger-bg);
-}
-
 /* ============================================================
-   Message Attached Files (read-only chips in user messages)
+   Inline mention chips (inside user message text)
    ============================================================ */
 
-.message-attached-files {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--ct-space-xs);
-	margin-top: var(--ct-space-xs);
+.file-chip-inline {
+	max-width: none;
+	vertical-align: text-bottom;
+	margin: 0 var(--ct-space-2xs);
 }
 
 .file-chip-readonly {

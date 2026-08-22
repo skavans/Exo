@@ -39,7 +39,6 @@ export interface ChatMessage {
 	isError?: boolean;
 	isStreaming?: boolean;
 	isQueued?: boolean;
-	attachedFiles?: string[];
 	images?: Array<{ mimeType: string; data: string; name?: string }>;
 	/** Runtime-only: kind of the last chunk, for the reasoningPhases counter. Not serialized. */
 	_lastChunkKind?: 'text' | 'reasoning' | 'tool' | null;

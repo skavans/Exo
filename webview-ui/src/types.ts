@@ -92,7 +92,6 @@ export interface ChatMessage {
 	isError?: boolean;
 	isStreaming?: boolean;
 	isQueued?: boolean;
-	attachedFiles?: string[];
 	images?: AttachedImage[];
 }
 

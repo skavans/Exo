@@ -25,7 +25,7 @@ function safeFuzzyMatch(query: string, target: string): FuzzyMatch {
 }
 
 interface Props {
-	onSend: (text: string, attachedFiles?: string[], images?: AttachedImage[]) => void;
+	onSend: (text: string, images?: AttachedImage[]) => void;
 	sessionId?: string;
 	commands: CommandInfo[];
 	config: ConfigState | null;
@@ -46,7 +46,6 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 	const [text, setText] = useState('');
 
 	// Shared popup state for @-mentions and /-commands.
-	const [attachedFiles, setAttachedFiles] = useState<string[]>([]);
 	const [images, setImages] = useState<AttachedImage[]>([]);
 	const [activePicker, setActivePicker] = useState<ActivePicker | null>(null);
 	const [rawSearchResults, setRawSearchResults] = useState<string[]>([]);
@@ -101,10 +100,6 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 
 	// Debounced search
 	const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	const addFile = useCallback((filePath: string) => {
-		setAttachedFiles((prev) => prev.includes(filePath) ? prev : [...prev, filePath]);
-	}, []);
 
 	const addImage = useCallback((img: AttachedImage) => {
 		setImages((prev) => [...prev, img]);
@@ -171,13 +166,7 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 			const files = detail?.files ?? [];
 			const rejected = detail?.rejected ?? 0;
 			if (files.length > 0) {
-				setAttachedFiles((prev) => {
-					const next = [...prev];
-					for (const p of files) {
-						if (!next.includes(p)) next.push(p);
-					}
-					return next;
-				});
+				insertMentions(files);
 			}
 			if (rejected > 0) {
 				showNotice(rejected === 1 ? '1 folder ignored' : `${rejected} folders ignored`);
@@ -185,11 +174,7 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 		};
 		window.addEventListener('exo-addDroppedFilesResult', handler);
 		return () => window.removeEventListener('exo-addDroppedFilesResult', handler);
-	}, [showNotice]);
-
-	const removeFile = useCallback((filePath: string) => {
-		setAttachedFiles((prev) => prev.filter((f) => f !== filePath));
-	}, []);
+	}, [showNotice, text]);
 
 	const closePicker = useCallback(() => {
 		setActivePicker(null);
@@ -208,24 +193,52 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 		ta.style.height = ta.scrollHeight + 'px';
 	}, []);
 
+	/** Insert inline mention tokens `@[path]` at the caret (or end of text). */
+	const insertMentions = useCallback((paths: string[]) => {
+		if (paths.length === 0) { return; }
+		const tokens = paths.map((p) => `@[${p}]`).join(' ');
+		setText((prev) => {
+			const ta = textareaRef.current;
+			const focused = ta && document.activeElement === ta;
+			const pos = focused ? ta.selectionStart : prev.length;
+			const end = focused ? ta.selectionEnd : pos;
+			const separator = pos > 0 && pos < prev.length && !/\s/.test(prev[pos - 1]) ? ' ' : '';
+			const before = prev.slice(0, pos);
+			const after = prev.slice(end);
+			const next = before + separator + tokens + (after ? ` ${after}` : '');
+			requestAnimationFrame(() => {
+				const el = textareaRef.current;
+				if (!el) { return; }
+				const cursor = (before + separator + tokens).length;
+				el.selectionStart = cursor;
+				el.selectionEnd = cursor;
+				autoResize();
+				el.focus({ preventScroll: true });
+			});
+			return next;
+		});
+	}, []);
+
+	/** Insert a single mention token inline at the caret. */
 	const selectMentionItem = useCallback((filePath: string) => {
 		const textarea = textareaRef.current;
 		if (!textarea || activePicker?.type !== 'mention') { return; }
 		const before = text.slice(0, activePicker.start);
 		const after = text.slice(textarea.selectionStart);
-		setText(before + after);
-		addFile(filePath);
+		const token = `@[${filePath}]`;
+		setText(before + token + after);
 		closePicker();
 		requestAnimationFrame(() => {
 			if (!textareaRef.current) {
 				return;
 			}
-			textareaRef.current.selectionStart = activePicker.start;
-			extareaRef.current.selectionEnd = activePicker.start;
+			const cursor = before.length + token.length;
+			textareaRef.current.selectionStart = cursor;
+			textareaRef.current.selectionEnd = cursor;
 			autoResize();
-			extareaRef.current.focus({ preventScroll: true });
+			textareaRef.current.focus({ preventScroll: true });
 		});
-	}, [activePicker, addFile, closePicker, text]);
+	}, [activePicker, closePicker, text]);
 
 	const selectCommandItem = useCallback((command: CommandInfo) => {
 		const textarea = textareaRef.current;
@@ -256,7 +269,6 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 				optionId: pendingReject.optionId,
 				followUpText: trimmed || undefined,
 			});
-			setAttachedFiles([]);
 			setImages([]);
 			setText('');
 			closePicker();
@@ -265,17 +277,15 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 			}
 			return;
 		}
-		if (!trimmed && attachedFiles.length === 0 && images.length === 0) { return; }
-		const files = attachedFiles.length > 0 ? [...attachedFiles] : undefined;
+		if (!trimmed && images.length === 0) { return; }
 		const imgs = images.length > 0 ? [...images] : undefined;
-		onSend(trimmed || '', files, imgs);
-		setAttachedFiles([]);
+		onSend(trimmed || '', imgs);
 		setImages([]);
 		setText('');
 		closePicker();
 		if (textareaRef.current) {
-			extareaRef.current.style.height = 'auto';
-			extareaRef.current.focus({ preventScroll: true });
+			textareaRef.current.style.height = 'auto';
+			textareaRef.current.focus({ preventScroll: true });
 		}
 	};
 
@@ -388,9 +398,8 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 
 	useEffect(() => {
 		const handler = (e: Event) => {
-			const detail = (e as CustomEvent<{ text: string; attachedFiles: string[] }>).detail;
+			const detail = (e as CustomEvent<{ text: string }>).detail;
 			setText(detail?.text ?? '');
-			setAttachedFiles(Array.isArray(detail?.attachedFiles) ? detail.attachedFiles : []);
 			requestAnimationFrame(() => autoResize());
 		};
 		window.addEventListener('exo-restoreDraft', handler);
@@ -398,8 +407,8 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 	}, []);
 
 	useEffect(() => {
-		vscode.postMessage({ type: 'updateDraftState', text, attachedFiles });
-	}, [text, attachedFiles]);
+		vscode.postMessage({ type: 'updateDraftState', text });
+	}, [text]);
 
 	// Scroll selected item into view
 	useEffect(() => {
@@ -419,7 +428,6 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 			: modeName
 				? `${modeName} mode — describe your task… (@ to attach files, / for commands)`
 				: 'Describe your task… (@ to attach files, / for commands)';
-
 	const [dragOver, setDragOver] = useState(false);
 	const dragDepthRef = useRef(0);
 
@@ -546,26 +554,6 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 							>×</button>
 						</span>
 					))}
-				</div>
-			)}
-			{/* File chips */}
-			{attachedFiles.length > 0 && (
-				<div class="file-chips">
-					{attachedFiles.map((filePath) => {
-						const fileName = filePath.split('/').pop()!;
-						return (
-							<span class="file-chip" key={filePath}>
-								<span class="file-chip-icon">📄</span>
-								<span class="file-chip-name" title={filePath}>{fileName}</span>
-								<button
-									class="file-chip-remove"
-									onClick={(e) => { e.preventDefault(); removeFile(filePath); }}
-									title="Remove"
-									aria-label={`Remove ${fileName}`}
-								>×</button>
-							</span>
-						);
-					})}
 				</div>
 			)}
 		<div class={`input-wrapper${pendingReject ? ' reject-mode' : ''}${canMerge && !isAgentRunning && !pendingReject ? ' merge-visible' : ''}`}>
@@ -725,6 +713,10 @@ function findActiveTrigger(text: string, cursorPos: number): ActivePicker | null
 	for (let i = cursorPos - 1; i >= 0; i--) {
 		const ch = text[i];
 		if (ch === '@' || ch === '/') {
+			// `@[` is a closed inline mention token — not a trigger.
+			if (ch === '@' && text[i + 1] === '[') {
+				return null;
+			}
 			if (i === 0 || text[i - 1] === ' ' || text[i - 1] === '\n' || text[i - 1] === '\t') {
 				return { type: ch === '@' ? 'mention' : 'command', query: text.slice(i + 1, cursorPos), start: i };
 			}

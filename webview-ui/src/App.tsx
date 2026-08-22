@@ -73,8 +73,8 @@ export function App() {
 		setThemeVersion(getThemeVersion());
 	}, []);
 
-	const handleSend = useCallback((text: string, attachedFiles?: string[], images?: AttachedImage[]) => {
-		vscode.postMessage({ type: 'sendMessage', text, attachedFiles, images });
+	const handleSend = useCallback((text: string, images?: AttachedImage[]) => {
+		vscode.postMessage({ type: 'sendMessage', text, images });
 	}, []);
 
 	const handleSelectConfigOption = useCallback((configId: string, value: string) => {
@@ -158,7 +158,6 @@ export function App() {
 					window.dispatchEvent(new CustomEvent('exo-restoreDraft', {
 						detail: {
 							text: typeof message.text === 'string' ? message.text : '',
-							attachedFiles: Array.isArray(message.attachedFiles) ? message.attachedFiles : [],
 						},
 					}));
 					break;

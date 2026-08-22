@@ -23,12 +23,11 @@ export class WebviewMessageHandler {
 			}
 			case 'sendMessage': {
 				const text = (message.text ?? '').trim();
-				const attachedFiles = message.attachedFiles as string[] | undefined;
 				const images = message.images as Array<{ mimeType: string; data: string; name?: string }> | undefined;
-				if (!text && (!attachedFiles || attachedFiles.length === 0) && (!images || images.length === 0)) {
+				if (!text && (!images || images.length === 0)) {
 					return;
 				}
-				void this.handleUserMessage(text, attachedFiles, images);
+				void this.handleUserMessage(text, images);
 				break;
 			}
 			case 'selectConfigOption': {
@@ -96,10 +95,7 @@ export class WebviewMessageHandler {
 			}
 			case 'updateDraftState': {
 				const text = typeof message.text === 'string' ? message.text : '';
-				const attachedFiles = Array.isArray(message.attachedFiles)
-					? message.attachedFiles.filter((item: unknown): item is string => typeof item === 'string')
-					: [];
-				this.provider.updateDraftState(text, attachedFiles);
+				this.provider.updateDraftState(text);
 				break;
 			}
 			case 'searchFiles': {
@@ -161,6 +157,53 @@ export class WebviewMessageHandler {
 	}
 
 	/**
+	 * Split a user text into interleaved `text` + `resource_link` content
+	 * blocks. Inline mention tokens `@[<path>]` (inserted by the @-picker or
+	 * file drop) become `resource_link` blocks at their exact position, per
+	 * ACP: `prompt` is a `ContentBlock[]`, so the file reference lands where
+	 * the mention was. A token whose file does not exist is left as plain text.
+	 */
+	private async buildContentBlocks(text: string, cwd: string): Promise<ContentBlock[]> {
+		const blocks: ContentBlock[] = [];
+		const tokenRe = /@\[([^\]]+)\]/g;
+		let last = 0;
+		let m: RegExpExecArray | null;
+		while ((m = tokenRe.exec(text)) !== null) {
+			const head = text.slice(last, m.index);
+			if (head) {
+				blocks.push({ type: 'text', text: head });
+			}
+			const relPath = m[1];
+			const abs = path.isAbsolute(relPath) ? relPath : path.resolve(cwd, relPath);
+			let exists = false;
+			try {
+				const stat = await vscode.workspace.fs.stat(vscode.Uri.file(abs));
+				exists = (stat.type & vscode.FileType.File) !== 0;
+			} catch {
+				exists = false;
+			}
+			if (exists) {
+				blocks.push({
+					type: 'resource_link',
+					uri: vscode.Uri.file(abs).toString(),
+					name: vscode.workspace.asRelativePath(abs, false),
+				});
+			} else {
+				blocks.push({ type: 'text', text: m[0] });
+			}
+			last = m.index + m[0].length;
+		}
+		const tail = text.slice(last);
+		if (tail) {
+			blocks.push({ type: 'text', text: tail });
+		}
+		if (blocks.length === 0 && text) {
+			blocks.push({ type: 'text', text });
+		}
+		return blocks;
+	}
+
+	/**
 	 * Main flow: text → ACP prompt → streamed response via callbacks.
 	 * Runs against the active session runtime; if none — creates one first.
 	 *
@@ -177,7 +220,6 @@ export class WebviewMessageHandler {
 	 */
 	public async handleUserMessage(
 		text: string,
-		attachedFiles?: string[],
 		images?: Array<{ mimeType: string; data: string; name?: string }>,
 		opts?: { preQueued?: boolean; runtime?: SessionRuntime; queuedMessage?: ChatMessage; mergeIntent?: boolean },
 	): Promise<void> {
@@ -195,7 +237,6 @@ export class WebviewMessageHandler {
 				begun.pending.queuedMessages.push({
 					role: 'user',
 					blocks: [{ type: 'text', content: text }],
-					attachedFiles: attachedFiles && attachedFiles.length > 0 ? attachedFiles : undefined,
 					images: images && images.length > 0 ? images.map((i) => ({ mimeType: i.mimeType, data: i.data, name: i.name })) : undefined,
 					isQueued: true,
 				});
@@ -221,7 +262,6 @@ export class WebviewMessageHandler {
 			runtime.messages.push({
 				role: 'user',
 				blocks: [{ type: 'text', content: text }],
-				attachedFiles: attachedFiles && attachedFiles.length > 0 ? attachedFiles : undefined,
 				images: images && images.length > 0 ? images.map((i) => ({ mimeType: i.mimeType, data: i.data, name: i.name })) : undefined,
 			});
 			// Title bookkeeping must never swallow the message: the push above
@@ -235,18 +275,7 @@ export class WebviewMessageHandler {
 		}
 		this.provider.updateMessages();
 
-		const blocks: ContentBlock[] = [];
-		if (text) {
-			blocks.push({ type: 'text', text });
-		}
-		for (const relPath of attachedFiles ?? []) {
-			const abs = path.isAbsolute(relPath) ? relPath : path.resolve(cwd, relPath);
-			blocks.push({
-				type: 'resource_link',
-				uri: vscode.Uri.file(abs).toString(),
-				name: vscode.workspace.asRelativePath(abs, false),
-			});
-		}
+		const blocks: ContentBlock[] = await this.buildContentBlocks(text, cwd);
 		for (const img of images ?? []) {
 			blocks.push({ type: 'image', mimeType: img.mimeType, data: img.data });
 		}
@@ -362,7 +391,7 @@ export class WebviewMessageHandler {
 
 			if (nextQueued) {
 				const nextText = nextQueued.blocks.find((b) => b.type === 'text')?.content ?? '';
-				await this.handleUserMessage(nextText, nextQueued.attachedFiles, nextQueued.images, {
+				await this.handleUserMessage(nextText, nextQueued.images, {
 					preQueued: true,
 					runtime,
 					queuedMessage: nextQueued,
@@ -470,7 +499,15 @@ export class WebviewMessageHandler {
 
 	private async handleAddDroppedFiles(paths: string[]): Promise<void> {
 		const { files, rejected } = await this.provider.validateDroppedFiles(paths);
-		this.provider.view?.webview.postMessage({ type: 'addDroppedFilesResult', files, rejected });
+		// Normalize to paths relative to the active session cwd, so the webview
+		// can embed them as inline `@[path]` mention tokens.
+		const cwd = this.provider.cwd;
+		const rel = files.map((p) => {
+			const abs = path.isAbsolute(p) ? p : path.resolve(cwd, p);
+			const relPath = path.relative(cwd, abs);
+			return relPath ? relPath.replace(/\\/g, '/') : path.basename(abs);
+		});
+		this.provider.view?.webview.postMessage({ type: 'addDroppedFilesResult', files: rel, rejected });
 	}
 
 	private async resolveFileLink(rawPath: string): Promise<string | null> {
