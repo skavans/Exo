@@ -19,11 +19,15 @@ UX. The agent stays fully in control of its state, sessions, and history.
 
 Because reading and writing code is much better in a real editor than in a TUI:
 
-- Proper typography and readable, syntax-highlighted markdown.
+- **Typography-first.** The whole UI is built around readable, syntax-highlighted
+  markdown — nice fonts, proper text. Tool calls collapse into a single compact
+  activity line, so you stay focused on the conversation, not the plumbing.
 - Code you can actually look at: hover, jump-to-definition, search, multiline diffs.
 - Every file edit the agent makes lands in a **real diff editor** you can inspect
-  and approve before it happens.
-- One click on any mentioned path opens the file at the exact line.
+  and approve before it happens — flip to YOLO auto-approve in one click whenever
+  you want.
+- When the agent references a file, Exo detects it and highlights it — one click
+  opens it at the exact line.
 - Every session works in its **own isolated git worktree** — your main branch
   stays clean no matter what the agent does, and results land in main with one
   click.
@@ -64,7 +68,8 @@ edges and report them.
   and the client together).
 - A **session picker** in the header: jump between open sessions, reopen recent
   ones, or delete them — all in one menu.
-- Automatic theming: the UI adapts to your current VS Code color theme.
+- Automatic theming: the UI adapts to your current VS Code color theme. Some
+  places it looks genuinely great, others may still need a tweak.
 - Syntax highlighting via Shiki (bundled, no WASM, instant), KaTeX math, and a
   crash-safe message renderer.
 - Persisted draft text and attached files across restarts; sessions are
