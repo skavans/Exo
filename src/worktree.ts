@@ -150,11 +150,32 @@ export async function createWorktree(root: string): Promise<WorktreeInfo | null>
 	return { path: target, branch: name, number };
 }
 
-/** True when the worktree has uncommitted changes (staged, working tree or untracked). */
+/**
+ * True when the worktree has uncommitted changes worth protecting: tracked
+ * modifications (staged or not) or non-empty untracked files. Zero-byte
+ * untracked files are treated as tool artifacts (e.g. opencode's stray `-`)
+ * and ignored — they must not block a merge or a session delete.
+ */
 export async function hasUncommittedChanges(worktreePath: string): Promise<boolean> {
 	try {
-		const out = await runGit(['status', '--porcelain'], worktreePath);
-		return out.trim().length > 0;
+		const out = await runGit(['status', '--porcelain', '-z', '--untracked-files=all'], worktreePath);
+		for (const record of out.split('\0')) {
+			if (!record) {
+				continue;
+			}
+			if (!record.startsWith('?? ')) {
+				return true; // tracked change (staged/working-tree/rename)
+			}
+			const file = path.resolve(worktreePath, record.slice(3));
+			try {
+				if ((await fs.promises.stat(file)).size > 0) {
+					return true;
+				}
+			} catch {
+				return true; // can't stat — treat as dirty to be safe
+			}
+		}
+		return false;
 	} catch {
 		return false;
 	}
