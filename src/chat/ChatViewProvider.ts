@@ -17,7 +17,7 @@ import {
 	type PermissionHandlerContext,
 } from '../acp/handlers/permission';
 import { applyToolCallPatch, type EditSpec } from '../acp/handlers/util';
-import { createWorktree, isGitRepository, registerWorktreeInScm, removeWorktree, sessionHasUncommittedWork } from '../worktree';
+import { createWorktree, isGitRepository, registerWorktreeInScm, removeWorktree, resolveMainBranch, sessionHasUncommittedWork } from '../worktree';
 import {
 	WorkspaceFolderSwitcher,
 	enterManagedWorkspace,
@@ -95,12 +95,20 @@ const FALLBACK_TITLE_MAX_LEN = 48;
 const DEFAULT_TITLE_PATTERN = /^(New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /**
- * User-message sent by the "commit & merge to main" button. The agent only
- * commits — the merge into main is performed host-side afterwards (the agent
- * can't switch to `main` from a linked worktree). The agent picks the commit
- * message, in the conversation's language.
+ * User-message sent by the "commit & merge to main" button. The agent commits
+ * its work and merges the repository's `main` branch INTO its own branch
+ * (resolving any conflicts in its own worktree), so that a host-side
+ * `--ff-only` merge of the branch into main afterwards can never conflict.
+ * Commit messages are written in English, always.
  */
-const COMMIT_AND_MERGE_PROMPT = 'Commit all your changes with a descriptive commit message. Do not switch branches or merge — Exo merges your branch into main.';
+function buildCommitAndMergePrompt(mainBranch: string): string {
+	return (
+		'Commit all your changes with a descriptive commit message written in English. ' +
+		`Then merge the repository's \`${mainBranch}\` branch into your current branch (run \`git merge --no-edit ${mainBranch}\`). ` +
+		`If the merge reports conflicts, resolve them by editing the files, staging them and completing the merge with a commit — your branch must end up containing all of ${mainBranch}. ` +
+		'Do not merge your branch into main and do not switch branches — Exo performs that final merge.'
+	);
+}
 
 /**
  * Terminal ANSI color keys, ordered exactly like `MODE_COLORS` in
@@ -1597,14 +1605,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/**
 	 * "Commit & merge to main" button: instruct the active agent (as a normal
-	 * user message) to commit its work; the merge of the worktree branch into
-	 * main is then performed host-side (see `mergeWorktreeToMain`) because the
-	 * agent can't switch to `main` from a linked worktree. The agent picks the
-	 * commit message in the conversation's language. The button is gated on
-	 * `canMerge` (see `refreshMergeState`), so it only fires when there is
-	 * unmerged work.
+	 * user message) to commit its work and merge `main` into its own branch,
+	 * resolving any conflicts in its own worktree. The final merge of the
+	 * branch into main is then performed host-side as a safe `--ff-only`
+	 * (see `mergeWorktreeToMain`). The agent cannot switch to `main` from a
+	 * linked worktree, but can merge `main` into the checked-out branch. The
+	 * button is gated on `canMerge` (see `refreshMergeState`), so it only
+	 * fires when there is unmerged work.
 	 */
-	public mergeToMain(): void {
+	public async mergeToMain(): Promise<void> {
 		const runtime = this.session;
 		if (!runtime || runtime.agentRunning || runtime.isStreaming) {
 			return;
@@ -1612,7 +1621,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		if (runtime.cwd === this.getWorkspaceRoot()) {
 			return;
 		}
-		void this._messageHandler.handleUserMessage(COMMIT_AND_MERGE_PROMPT, undefined, undefined, { mergeIntent: true });
+		const main = await resolveMainBranch(runtime.cwd);
+		if (!main) {
+			vscode.window.showWarningMessage('Exo: could not determine the repository main branch — merge cancelled.');
+			return;
+		}
+		void this._messageHandler.handleUserMessage(buildCommitAndMergePrompt(main), undefined, undefined, { mergeIntent: true });
 	}
 
 	/**

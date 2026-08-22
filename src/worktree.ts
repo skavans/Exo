@@ -189,7 +189,7 @@ export async function hasUncommittedChanges(worktreePath: string): Promise<boole
  * and comparing against the remote-tracking ref (`origin/main`) would always
  * look unmerged until a fetch.
  */
-async function resolveMainBranch(worktreePath: string): Promise<string | null> {
+export async function resolveMainBranch(worktreePath: string): Promise<string | null> {
 	try {
 		const head = (await runGit(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], worktreePath)).trim();
 		if (head) {
@@ -260,21 +260,22 @@ export type MergeWorktreeStatus =
 	| { status: 'clean-merged' }
 	| { status: 'merged-dirty' }
 	| { status: 'uncommitted' }
-	| { status: 'conflict'; detail: string };
+	| { status: 'not-merged'; detail: string };
 
 /**
- * Merge the worktree's branch into the repository's main branch. The agent
- * runs in a linked worktree where `main` is checked out in the primary
- * worktree, so `git checkout main` is impossible there — the host performs the
- * merge where main is checked out (the root worktree). Only commits are moved:
- * uncommitted files in the worktree don't block the merge. Idempotent —
- * returns `clean-merged` when the branch is already fully in main.
+ * Fast-forward the repository's main branch to the worktree branch. The agent
+ * has already integrated main into its own branch (see the merge prompt), so
+ * this is a plain `--ff-only` merge in the root worktree where main is checked
+ * out — no conflict can ever be left behind. Returns `not-merged` when the
+ * branch isn't a strict descendant of main (the agent didn't integrate main,
+ * or the root worktree had local changes). Idempotent — returns
+ * `clean-merged` when the branch is already fully in main.
  */
 export async function mergeWorktreeToMain(worktreePath: string, root: string): Promise<MergeWorktreeStatus> {
 	try {
 		const main = await resolveMainBranch(worktreePath);
 		if (!main) {
-			return { status: 'conflict', detail: 'main branch is not resolvable' };
+			return { status: 'not-merged', detail: 'main branch is not resolvable' };
 		}
 		const ahead = parseInt((await runGit(['rev-list', '--count', `${main}..HEAD`], worktreePath)).trim(), 10);
 		if (ahead === 0) {
@@ -282,13 +283,13 @@ export async function mergeWorktreeToMain(worktreePath: string, root: string): P
 		}
 		const branch = path.basename(worktreePath);
 		try {
-			await runGit(['merge', '--no-edit', branch], root);
+			await runGit(['merge', '--ff-only', branch], root);
 		} catch (err) {
-			return { status: 'conflict', detail: err instanceof Error ? err.message : String(err) };
+			return { status: 'not-merged', detail: err instanceof Error ? err.message : String(err) };
 		}
 		return (await hasUncommittedChanges(worktreePath)) ? { status: 'merged-dirty' } : { status: 'clean-merged' };
 	} catch (err) {
-		return { status: 'conflict', detail: err instanceof Error ? err.message : String(err) };
+		return { status: 'not-merged', detail: err instanceof Error ? err.message : String(err) };
 	}
 }
 

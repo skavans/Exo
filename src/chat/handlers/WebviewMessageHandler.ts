@@ -165,8 +165,9 @@ export class WebviewMessageHandler {
 	 * `isQueued` in history). `opts.runtime` — dispatch to a specific runtime
 	 * even if the user navigated away while it was still spawning.
 	 * `opts.mergeIntent` — this turn was triggered by the "commit & merge to
-	 * main" button; after the turn the host merges the worktree branch into
-	 * main and reports the outcome.
+	 * main" button; the agent commits and integrates main into its branch, and
+	 * after the turn the host fast-forwards main to the branch and reports the
+	 * outcome.
 	 */
 	public async handleUserMessage(
 		text: string,
@@ -303,9 +304,10 @@ export class WebviewMessageHandler {
 				}
 				// Turn ended — refresh the "commit & merge" button state.
 				this.provider.refreshMergeState();
-				// Merge-triggered turn: merge the session's branch into main
-				// host-side (the agent can't switch to `main` from a linked
-				// worktree) and report the outcome.
+				// Merge-triggered turn: the agent committed and integrated main
+				// into its branch; fast-forward main to the branch host-side
+				// (main is checked out in the root worktree, so the agent
+				// cannot do this from a linked worktree) and report the outcome.
 				if (opts?.mergeIntent && runtime.cwd !== this.provider.getWorkspaceRoot()) {
 					void mergeWorktreeToMain(runtime.cwd, this.provider.getWorkspaceRoot()).then(
 						(res) => {
@@ -334,9 +336,11 @@ export class WebviewMessageHandler {
 										'Exo: changes were not merged into main — the session still has uncommitted work.',
 									);
 									break;
-								case 'conflict':
-									vscode.window.showWarningMessage(`Exo: could not merge into main — ${res.detail}`);
-									break;
+							case 'not-merged':
+								vscode.window.showWarningMessage(
+									`Exo: changes were not merged into main — ${res.detail}`,
+								);
+								break;
 							}
 						},
 						() => { /* best-effort check */ },
