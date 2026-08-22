@@ -614,6 +614,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			if (wt) {
 				cwd = wt.path;
 				void registerWorktreeInScm(cwd);
+				// Surface the worktree in the Explorer + SCM immediately, while
+				// the agent is still booting — don't wait for session activation.
+				this.followSessionFolder(cwd);
+				void refreshScmStatus(cwd);
 				// The worktree owns the number (first free `exo-<N>` on disk):
 				// align the session badge/terminal with the folder/branch name.
 				if (wt.number !== pending.number) {
