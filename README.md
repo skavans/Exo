@@ -1,7 +1,7 @@
 # Exo — AI Coding Agent Client for VS Code
 
 <p align="center">
-  <img src="media/screenshot.png?v=2" alt="Exo — AI coding assistant in the VS Code sidebar" width="560"/>
+  <img src="media/screenshot-v2.png" alt="Exo — AI coding assistant in the VS Code sidebar" width="560"/>
 </p>
 
 A local AI coding assistant interface that lives in your VS Code sidebar. Exo
