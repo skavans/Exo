@@ -182,15 +182,23 @@ export async function hasUncommittedChanges(worktreePath: string): Promise<boole
 }
 
 /**
- * Resolve the "main" branch of the shared repository: origin's default branch
- * (`origin/HEAD`) or, failing that, a local `main`/`master`. Returns null when
- * undeterminable (bare repo, no remote, unusual branch name).
+ * Resolve the "main" branch of the shared repository: the local branch
+ * pointed to by origin's default (`origin/HEAD`), or a local `main`/`master`.
+ * Returns null when undeterminable (bare repo, no remote, unusual branch
+ * name). The result is a LOCAL branch name — Exo merges into the local branch,
+ * and comparing against the remote-tracking ref (`origin/main`) would always
+ * look unmerged until a fetch.
  */
 async function resolveMainBranch(worktreePath: string): Promise<string | null> {
 	try {
 		const head = (await runGit(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], worktreePath)).trim();
 		if (head) {
-			return head;
+			// `--short` yields `origin/main`; strip the remote prefix so the
+			// comparison targets the local branch (e.g. `main`), not `origin/main`.
+			const name = head.replace(/^[^/]+\//, '');
+			if (name) {
+				return name;
+			}
 		}
 	} catch {
 		// fall through to local main/master
