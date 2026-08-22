@@ -638,7 +638,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			// Create + show the terminal NOW (before the agent spawn — the slow
 			// part), so its shell starts while the agent boots and the session
 			// activation below never waits on it.
-			this.createPendingTerminal(pending, cwd);
+			await this.createPendingTerminal(pending, cwd);
 			const runtime = await this.spawnSession(pending.number, cwd, 'new');
 			this.resolvePendingSession(pending, runtime, 'New Chat');
 			return runtime;
@@ -698,7 +698,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			void registerWorktreeInScm(cwd);
 		}
 		try {
-			this.createPendingTerminal(pending, cwd);
+			await this.createPendingTerminal(pending, cwd);
 			this.postPendingView(pending);
 			const runtime = await this.spawnSession(number, cwd, 'load', agentSessionId);
 			this.resolvePendingSession(pending, runtime, title);
@@ -1168,7 +1168,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this.upsertSessionRegistry(runtime.id, runtime.agentSessionId, title, runtime.cwd);
 		this.persistUiStateSoon();
-		this.ensureSessionTerminal(runtime);
+		void this.ensureSessionTerminal(runtime);
 		if (activate) {
 			this.showSessionRuntime(runtime);
 		}
@@ -1179,7 +1179,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	/**
 	 * Create a terminal named `exo-<N>` rooted in `cwd` (worktree). Created
 	 * hidden and transient: it only surfaces when the user is in the terminal
-	 * panel, and is never resurrected after a VS Code restart.
+	 * panel. A terminal that survived a window reload / extension-host restart
+	 * is reused by `ensureSessionTerminal` instead of creating a second one.
 	 */
 	private createSessionTerminal(number: number, cwd: string): vscode.Terminal {
 		return vscode.window.createTerminal({
@@ -1193,13 +1194,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
 	/** Create the pending-phase terminal BEFORE the agent spawn (so it never
 	 *  pops up mid-typing); keyed by the pending id until the runtime resolves.
+	 *  Reuses a live `exo-<N>` terminal that survived a window reload /
+	 *  extension-host restart (this is the path a restored session takes, so
+	 *  the reuse MUST happen here, not only in `ensureSessionTerminal`).
 	 *  Shows it immediately: showing is what starts the shell process, so the
 	 *  session-activation `show(true)` below becomes instant instead of
 	 *  spawning bash/zsh on the spot. `preserveFocus` keeps the chat input. */
-	private createPendingTerminal(pending: PendingSession, cwd: string): vscode.Terminal {
+	private async createPendingTerminal(pending: PendingSession, cwd: string): Promise<vscode.Terminal> {
 		const existing = this._sessionTerminals.get(pending.id);
 		if (existing) {
 			return existing;
+		}
+		const live = await this.findLiveSessionTerminal(pending.number);
+		if (live) {
+			this._sessionTerminals.set(pending.id, live);
+			return live;
 		}
 		const terminal = this.createSessionTerminal(pending.number, cwd);
 		this._sessionTerminals.set(pending.id, terminal);
@@ -1217,15 +1226,50 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this._sessionTerminals.set(toId, terminal);
 	}
 
-	/** Get the runtime's terminal (usually created during the pending phase). */
-	private ensureSessionTerminal(runtime: SessionRuntime): vscode.Terminal {
+	/** Get the runtime's terminal (usually created during the pending phase).
+	 *  Reuses a live `exo-<N>` terminal that survived a window reload /
+	 *  extension-host restart (found in `vscode.window.terminals`) instead of
+	 *  creating a second instance. */
+	private async ensureSessionTerminal(runtime: SessionRuntime): Promise<vscode.Terminal> {
 		const existing = this._sessionTerminals.get(runtime.id);
 		if (existing) {
 			return existing;
 		}
+		const live = await this.findLiveSessionTerminal(runtime.number);
+		if (live) {
+			this._sessionTerminals.set(runtime.id, live);
+			return live;
+		}
 		const terminal = this.createSessionTerminal(runtime.number, runtime.cwd);
 		this._sessionTerminals.set(runtime.id, terminal);
 		return terminal;
+	}
+
+	/**
+	 * Find a live `exo-<N>` terminal already open in this window. A terminal
+	 * whose creating extension host was restarted can linger in
+	 * `vscode.window.terminals` with a stale `exitStatus`, so liveness is judged
+	 * by `processId` (undefined = no process), not by `exitStatus`.
+	 */
+	private async findLiveSessionTerminal(number: number): Promise<vscode.Terminal | undefined> {
+		const name = formatTerminalName(number);
+		for (const t of vscode.window.terminals) {
+			if (t.name !== name) {
+				continue;
+			}
+			if (await t.processId !== undefined) {
+				return t;
+			}
+		}
+		const dump = await Promise.all(
+			vscode.window.terminals.map(async (t) => ({
+				name: t.name,
+				pid: await t.processId,
+				exitStatus: t.exitStatus ? `${t.exitStatus.code}` : 'running',
+			})),
+		);
+		console.log(`[Exo] no live terminal ${name}; all terminals:`, JSON.stringify(dump));
+		return undefined;
 	}
 
 	/** Kill a session's terminal (tab close / session delete). */
@@ -1606,7 +1650,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.sendTabs();
 		// Bring the session's terminal forward WITHOUT stealing focus from the
 		// chat input (`show(true)` preserves focus; `false` would yank it).
-		this.ensureSessionTerminal(runtime).show(true);
+		void this.ensureSessionTerminal(runtime).then((t) => t.show(true));
 		// Open deferred diff editors for pending edit-permissions.
 		void this.openDeferredDiffs(runtime);
 	}
