@@ -104,6 +104,12 @@ interface PendingSession {
 	agentSessionId: string | null;
 	/** Ordinal session number — already assigned at pending time, carried to the runtime. */
 	number: number;
+	/**
+	 * cwd chosen for this session (worktree path for git repos, shared root
+	 * otherwise). Set in `completeNewSession` right after the worktree exists,
+	 * so a cancelled/failed create can remove the orphan worktree.
+	 */
+	cwd: string | null;
 	/** Session to restore the active view to if this pending operation fails. */
 	prevActiveId: string | null;
 	/** Set when the user closes the pending tab — resolve/fail become no-ops. */
@@ -540,6 +546,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		if (!this._readyHandled) {
 			this._readyHandled = true;
 			this.restorePersistedUiState();
+			// Self-healing after restore: drop any registry entry whose worktree
+			// folder no longer exists (manually deleted, or a past bug's leftover).
+			void this.pruneDeadRegistryEntries();
 		}
 		this.postDraftState();
 		if (!this.configWatcher.config.agents?.length) {
@@ -619,6 +628,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		} catch (err) {
 			console.error('[Exo] worktree creation failed, using shared root:', err);
 		}
+		// Remember the chosen cwd so a cancelled/failed create can clean up the
+		// orphan worktree (see `disposePendingWorktree`).
+		pending.cwd = cwd;
 		try {
 			// Create + show the terminal NOW (before the agent spawn — the slow
 			// part), so its shell starts while the agent boots and the session
@@ -800,9 +812,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			}
 		}
 
+		// The agent is still alive and could tick the title poller or push a
+		// `session_info_update` that re-adds the entry we're about to delete.
+		// Stop the poller immediately; the background teardown below re-deletes
+		// (idempotent) after disconnect, so no late update can resurrect it.
+		const deletingRuntime = this.sessions.get(tabId);
+		if (deletingRuntime) {
+			this.stopTitlePolling(deletingRuntime);
+		}
+
 		// Optimistic: remove from tabs/registry immediately.
 		this._tabList = this._tabList.filter((t) => t.tabId !== tabId);
 		this._sessionRegistry.delete(tabId);
+		// The registry is persistent — persist the deletion NOW, otherwise a
+		// restart resurrects the deleted session in the recent menu.
+		this.persistRegistrySoon();
 		this._drafts.delete(tabId);
 		this.persistDrafts();
 		this.persistUiStateSoon();
@@ -853,8 +877,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 					}
 				}
 			} finally {
-				// Every reference to `exo-<N>` (tabs/registry/draft/runtime/terminal/worktree)
-				// is gone now — the number may be handed to a fresh session.
+				// Idempotent: a late `session_info_update` (pre-disconnect) could
+				// have re-added the entry — delete again so a restart can never
+				// resurrect the deleted session, then release the number.
+				this._sessionRegistry.delete(tabId);
+				this.persistRegistrySoon();
 				this.freeNumber(freedNumber);
 			}
 		})();
@@ -944,6 +971,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			mode,
 			agentSessionId: mode === 'load' ? agentSessionId ?? null : null,
 			number: number ?? this.takeNumber(),
+			cwd: null,
 			prevActiveId: prevActiveId ?? null,
 			cancelled: false,
 			queuedMessages: [],
@@ -978,7 +1006,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private resolvePendingSession(pending: PendingSession, runtime: SessionRuntime, title: string): void {
 		this._pendingSessions.delete(pending.id);
 		if (pending.cancelled) {
-			// Tab was closed while loading — don't leak the spawned agent or the terminal.
+			// Tab was closed while loading — don't leak the spawned agent, the
+			// terminal or an orphan worktree.
+			this.disposePendingWorktree(pending);
 			this.disposeSessionTerminal(pending.id);
 			try {
 				runtime.acpClient.disconnect();
@@ -1017,11 +1047,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 	}
 
+	/**
+	 * A `new` create that failed or was cancelled after its worktree was
+	 * created would otherwise leave an orphan worktree + branch on disk forever.
+	 * Safe by construction: `removeWorktree` refuses non-Exo paths and dirty
+	 * worktrees (no `confirmed` here), so no real work can be destroyed.
+	 */
+	private disposePendingWorktree(pending: PendingSession): void {
+		if (pending.mode !== 'new') {
+			return;
+		}
+		const cwd = pending.cwd;
+		if (!cwd || cwd === this.getWorkspaceRoot() || !isExoWorktreePath(cwd)) {
+			return;
+		}
+		void removeWorktree(cwd).catch((err) => {
+			console.error('[Exo] orphan worktree cleanup failed:', err);
+		});
+	}
+
 	/** A pending op failed: restore the previous active view (or show empty). */
 	private failPendingSession(pending: PendingSession): void {
 		this._pendingSessions.delete(pending.id);
 		this._drafts.delete(pending.id);
 		this.disposeSessionTerminal(pending.id);
+		this.disposePendingWorktree(pending);
 		// A `new` pending never became a session — its number is free again.
 		// (`load` numbers belong to persisted entries and must be kept.)
 		if (pending.mode === 'new') {
@@ -2141,6 +2191,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			}
 		}
 		this._nextSessionNumber = maxNumber + 1;
+	}
+
+	/**
+	 * Self-healing: drop recent-session entries whose worktree folder no longer
+	 * exists on disk (deleted manually, or a leftover from a past bug). The
+	 * registry is a cache — it must never point at a dead path. Runs once at
+	 * startup, right after restore.
+	 */
+	private async pruneDeadRegistryEntries(): Promise<void> {
+		const root = this.getWorkspaceRoot();
+		let changed = false;
+		for (const [tabId, entry] of this._sessionRegistry) {
+			if (!entry.cwd || entry.cwd === root || !isExoWorktreePath(entry.cwd)) {
+				continue;
+			}
+			try {
+				await fs.promises.access(entry.cwd);
+			} catch {
+				// Folder gone — the entry is dead. Drop it everywhere.
+				this._sessionRegistry.delete(tabId);
+				this._drafts.delete(tabId);
+				this._tabList = this._tabList.filter((t) => t.tabId !== tabId);
+				changed = true;
+			}
+		}
+		if (changed) {
+			this.persistRegistrySoon();
+			this.persistUiStateSoon();
+			this.sendSessionList();
+			this.sendTabs();
+		}
 	}
 
 	private persistUiStateSoon(): void {
