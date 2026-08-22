@@ -42,18 +42,31 @@ export interface SessionRuntimeCallbacks {
 }
 
 export class SessionRuntime {
-	id: string;
+	/**
+	 * Client-owned tab id — `exo-<N>`, derived from the ordinal number. Never
+	 * mutates, so a tab keeps its identity regardless of which agent session it
+	 * ends up running (see `agentSessionId`).
+	 */
+	readonly id: string;
 	readonly cwd: string;
+	/** Ordinal session number — matches the worktree/terminal name `exo-<N>` and the header badge. */
+	readonly number: number;
 	readonly files = new Files();
 	/** Set by ChatViewProvider.spawnSession after construction (callbacks need the runtime). */
 	acpClient!: AcpClient;
 	callbacks: SessionRuntimeCallbacks;
 
+	/**
+	 * Agent-owned ACP session id (`session/new|load|resume`). Mutable: assigned
+	 * after connect, and differs from the requested one when a load fell back
+	 * to a fresh session. Used for every agent-facing call (`session/load`,
+	 * `session/close`, `session/delete`, `session/list` matching) — never the
+	 * tab identity.
+	 */
+	agentSessionId = '';
+
 	/** Display title (agent-owned, from session_info_update). */
 	title = '';
-
-	/** Ordinal session number — matches the terminal name `exo-<N>` and the header badge. */
-	number = 0;
 
 	// --- Messages / tool calls ---
 	messages: ChatMessage[] = [];
@@ -88,8 +101,9 @@ export class SessionRuntime {
 	titlePollStart = 0;
 	titlePollTimer: ReturnType<typeof setInterval> | null = null;
 
-	constructor(id: string, cwd: string, callbacks: SessionRuntimeCallbacks) {
-		this.id = id;
+	constructor(number: number, cwd: string, callbacks: SessionRuntimeCallbacks) {
+		this.number = number;
+		this.id = `exo-${number}`;
 		this.cwd = cwd;
 		this.callbacks = callbacks;
 	}
