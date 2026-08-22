@@ -53,16 +53,6 @@
         "icon": "$(add)"
       }
     ],
-    "configuration": {
-      "title": "Exo",
-      "properties": {
-        "exo.followSessionFolder": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Automatically switch the Explorer folder to the active session's worktree. Requires the project to be open as the managed Exo workspace (Exo offers this on first use)."
-        }
-      }
-    },
     "menus": {
       "commandPalette": [
         {
