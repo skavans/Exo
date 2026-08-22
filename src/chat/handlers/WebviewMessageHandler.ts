@@ -179,11 +179,14 @@ export class WebviewMessageHandler {
 		// navigate away while the new session is still spawning).
 		let runtime = opts?.runtime ?? this.provider.session;
 		if (!runtime) {
-			const pending = this.provider.activePendingNewSession;
-			if (pending) {
-				// Session still spawning — render the message optimistically as
-				// queued; resolvePendingSession dispatches it when it's ready.
-				pending.queuedMessages.push({
+			// No active session yet: kick off an optimistic new one and queue
+			// this message as `isQueued` — rendered immediately, dispatched by
+			// resolvePendingSession once the agent is up. Covers both a
+			// first-ever message on an empty chat and typing while a session is
+			// already spawning (beginNewSession returns the in-flight pending).
+			const begun = this.provider.beginNewSession();
+			if (begun) {
+				begun.pending.queuedMessages.push({
 					role: 'user',
 					blocks: [{ type: 'text', content: text }],
 					attachedFiles: attachedFiles && attachedFiles.length > 0 ? attachedFiles : undefined,
@@ -193,7 +196,8 @@ export class WebviewMessageHandler {
 				this.provider.updateMessages();
 				return;
 			}
-			runtime = await this.provider.newSession();
+			this.pushAssistantError('No active session');
+			return;
 		}
 		if (!runtime || !runtime.acpClient.sessionId) {
 			this.pushAssistantError('No active session');

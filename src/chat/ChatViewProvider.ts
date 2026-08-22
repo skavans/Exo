@@ -17,7 +17,16 @@ import {
 	type PermissionHandlerContext,
 } from '../acp/handlers/permission';
 import { applyToolCallPatch, type EditSpec } from '../acp/handlers/util';
-import { createWorktree, isGitRepository, registerWorktreeInScm, removeWorktree, resolveMainBranch, sessionHasUncommittedWork } from '../worktree';
+import {
+	createWorktree,
+	ensureGitExclude,
+	isGitRepository,
+	refreshScmStatus,
+	registerWorktreeInScm,
+	removeWorktree,
+	resolveMainBranch,
+	sessionHasUncommittedWork,
+} from '../worktree';
 import {
 	WorkspaceFolderSwitcher,
 	enterManagedWorkspace,
@@ -457,6 +466,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	/** Webview ready: eager connect to the persisted active tab; tabs load lazily. */
 	public async handleReady(): Promise<void> {
 		this._workspaceRoot = this.resolveWorkspaceRoot();
+		// Defensive: make sure `.exo/` is hidden from git. If the root repo's
+		// status ran before the exclude was applied (e.g. the one-time workspace
+		// migration), the worktree files could otherwise show as untracked.
+		void ensureGitExclude(this._workspaceRoot);
 		if (!this._readyHandled) {
 			this._readyHandled = true;
 			this.restorePersistedUiState();
@@ -489,18 +502,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	// Session lifecycle
 	// ------------------------------------------------------------------
 
-	/** Create a brand-new session: worktree (or shared root) cwd + session/new. Returns the runtime or null. */
-	public async newSession(): Promise<SessionRuntime | null> {
+	/**
+	 * Kick off a brand-new session optimistically: the empty chat + input is
+	 * rendered IMMEDIATELY (before any worktree/agent work), and messages typed
+	 * meanwhile are queued on the pending op (dispatched by
+	 * `completeNewSession` once the runtime exists). Returns `{ created: true }`
+	 * with a fresh pending op, or `{ created: false }` when a create is already
+	 * in flight (repeated click / concurrent first message) — the caller should
+	 * queue into that pending instead of starting another one. `null` when no
+	 * agent is configured.
+	 */
+	public beginNewSession(): { pending: PendingSession; created: boolean } | null {
 		if (!this.acpAgentConfig()) {
 			return null;
 		}
-		// Ignore repeated clicks while a create is already in flight.
 		for (const p of this._pendingSessions.values()) {
 			if (p.mode === 'new') {
-				return null;
+				return { pending: p, created: false };
 			}
 		}
 		const pending = this.addPendingSession('new', 'New Chat', this._activeSessionId ?? undefined);
+		this.postPendingView(pending);
+		return { pending, created: true };
+	}
+
+	/**
+	 * Back the optimistic pending op with a real session: worktree (or shared
+	 * root) cwd, terminal, agent spawn. The chat is already visible (see
+	 * `beginNewSession`); this just wires up the runtime and resolves the op.
+	 */
+	public async completeNewSession(pending: PendingSession): Promise<SessionRuntime | null> {
 		let cwd = this.getWorkspaceRoot();
 		try {
 			const wt = await createWorktree(this.getWorkspaceRoot());
@@ -524,11 +555,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			console.error('[Exo] worktree creation failed, using shared root:', err);
 		}
 		try {
-			// Create the terminal NOW (before the agent spawn — the slow part),
-			// so it never pops up while the user is already typing; the chat
-			// view and input autofocus come after it.
+			// Create + show the terminal NOW (before the agent spawn — the slow
+			// part), so its shell starts while the agent boots and the session
+			// activation below never waits on it.
 			this.createPendingTerminal(pending, cwd);
-			this.postPendingView(pending);
 			const runtime = await this.spawnSession('', cwd, 'new');
 			this.resolvePendingSession(pending, runtime, 'New Chat');
 			return runtime;
@@ -538,6 +568,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			vscode.window.showErrorMessage(`Failed to create session: ${err instanceof Error ? err.message : String(err)}`);
 			return null;
 		}
+	}
+
+	/** Create a brand-new session: optimistic begin + background completion. Returns the runtime or null. */
+	public async newSession(): Promise<SessionRuntime | null> {
+		const res = this.beginNewSession();
+		if (!res) {
+			return null;
+		}
+		if (!res.created) {
+			// A create is already in flight (repeated click) — nothing to start.
+			return null;
+		}
+		return this.completeNewSession(res.pending);
 	}
 
 	/**
@@ -1019,7 +1062,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	}
 
 	/** Create the pending-phase terminal BEFORE the agent spawn (so it never
-	 *  pops up mid-typing); keyed by the pending id until the runtime resolves. */
+	 *  pops up mid-typing); keyed by the pending id until the runtime resolves.
+	 *  Shows it immediately: showing is what starts the shell process, so the
+	 *  session-activation `show(true)` below becomes instant instead of
+	 *  spawning bash/zsh on the spot. `preserveFocus` keeps the chat input. */
 	private createPendingTerminal(pending: PendingSession, cwd: string): vscode.Terminal {
 		const existing = this._sessionTerminals.get(pending.id);
 		if (existing) {
@@ -1027,6 +1073,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		const terminal = this.createSessionTerminal(pending.number, cwd);
 		this._sessionTerminals.set(pending.id, terminal);
+		terminal.show(true);
 		return terminal;
 	}
 
@@ -1402,6 +1449,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this._activeSessionId = runtime.id;
 		this.followSessionFolder(runtime.cwd);
+		// Force the worktree repo to refresh in the SCM view right away — the
+		// git extension's file watcher is debounced (~1s), so without this its
+		// changes could look stale until the next auto-refresh.
+		void refreshScmStatus(runtime.cwd);
 		this.persistUiStateSoon();
 		this.view?.webview.postMessage({
 			type: 'showChat',

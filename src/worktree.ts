@@ -327,6 +327,12 @@ export async function mergeWorktreeToMain(worktreePath: string, root: string): P
  * extension API (`api.openRepository`). This makes the worktree appear in the
  * Source Control repositories list regardless of `git.detectWorktrees` timing
  * and even though its folder lives outside the workspace.
+ *
+ * IMPORTANT: `API.getRepository(uri)` resolves to the MOST SPECIFIC open repo
+ * that CONTAINS the path. Our worktrees live INSIDE the root repo (always open),
+ * so a plain `getRepository(worktreePath)` returns the ROOT repo and the worktree
+ * would never be opened as its own repository. We must compare the resolved
+ * repo ROOT against the worktree path itself.
  */
 export async function registerWorktreeInScm(worktreePath: string): Promise<void> {
 	try {
@@ -335,16 +341,74 @@ export async function registerWorktreeInScm(worktreePath: string): Promise<void>
 			return;
 		}
 		const exports = gitExt.isActive ? gitExt.exports : await gitExt.activate();
-		const api = (exports as { getAPI?: (version: 1) => { getRepository: (uri: vscode.Uri) => unknown; openRepository: (root: vscode.Uri) => Promise<unknown> } } | undefined);
+		const api = (exports as { getAPI?: (version: 1) => GitApiV1 } | undefined);
 		if (!api?.getAPI) {
 			return;
 		}
 		const gitApi = api.getAPI(1);
-		if (gitApi.getRepository(vscode.Uri.file(worktreePath))) {
-			return; // already registered
+		const uri = vscode.Uri.file(worktreePath);
+		const existing = gitApi.getRepository(uri);
+		if (existing && existing.rootUri.fsPath === worktreePath) {
+			return; // already registered as its own repository
 		}
-		await gitApi.openRepository(vscode.Uri.file(worktreePath));
+		// The worktree folder may not exist yet (we race `git worktree add`);
+		// openRepository on a non-existent root fails. Wait for the `.git`
+		// marker to appear (bounded — registration is best-effort anyway).
+		await waitForFile(path.join(worktreePath, '.git'), 5000);
+		await gitApi.openRepository(uri);
+		const repo = gitApi.getRepository(uri);
+		if (repo && repo.rootUri.fsPath === worktreePath) {
+			// Force an immediate status so the SCM view isn't empty until the
+			// extension's debounced file watcher fires.
+			await repo.status();
+		}
 	} catch (err) {
 		console.error('[Exo worktree] SCM registration failed:', err);
+	}
+}
+
+/** Minimal git extension API v1 surface we rely on. */
+interface GitApiV1 {
+	getRepository(uri: vscode.Uri): { rootUri: vscode.Uri; status: () => Promise<void> } | null;
+	openRepository(root: vscode.Uri): Promise<unknown>;
+}
+
+/**
+ * Force the git extension to refresh a repository's status in the SCM view.
+ * The built-in extension debounces its file watcher (~1s), so after a session
+ * becomes active we nudge the worktree repo so its changes appear immediately.
+ */
+export async function refreshScmStatus(worktreePath: string): Promise<void> {
+	try {
+		const gitExt = vscode.extensions.getExtension('vscode.git');
+		if (!gitExt) {
+			return;
+		}
+		const exports = gitExt.isActive ? gitExt.exports : await gitExt.activate();
+		const api = (exports as { getAPI?: (version: 1) => GitApiV1 } | undefined);
+		if (!api?.getAPI) {
+			return;
+		}
+		const repo = api.getAPI(1).getRepository(vscode.Uri.file(worktreePath));
+		if (repo && repo.rootUri.fsPath === worktreePath) {
+			await repo.status();
+		}
+	} catch (err) {
+		console.error('[Exo worktree] SCM refresh failed:', err);
+	}
+}
+
+/** Poll until `p` exists (or timeout). Best-effort for racing async git ops. */
+async function waitForFile(p: string, timeoutMs: number): Promise<void> {
+	const start = Date.now();
+	while (Date.now() - start < timeoutMs) {
+		try {
+			if ((await fs.promises.stat(p)).isFile()) {
+				return;
+			}
+		} catch {
+			// not there yet — keep polling
+		}
+		await new Promise((r) => setTimeout(r, 50));
 	}
 }
