@@ -9,7 +9,7 @@
  * session's worktree is the only folder ever swapped:
  *
  *     [ <root> ]                     — idle (Explorer shows only the root)
- *     [ <root> , <root>/.exo/worktrees/exo-N ]   — active session
+ *     [ <root> , <root>/.exo/worktrees/exo-N/<project> ]   — active session
  *                 index 0                          index 1
  *
  * `folders[0]` therefore never moves, and session switches stay reload-free.
@@ -28,7 +28,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { ensureGitExclude, isExoWorktreePath } from './worktree';
+import { ensureGitExclude, isExoWorktreePath, worktreeBranchFromPath } from './worktree';
 
 export { isExoWorktreePath };
 
@@ -120,7 +120,7 @@ export async function enterManagedWorkspace(root: string): Promise<void> {
  */
 export class WorkspaceFolderSwitcher {
 	private _inFlight = false;
-	private _pending: { root: string; target: string } | null = null;
+	private _pending: { root: string; target: string; name?: string } | null = null;
 	private _timer: ReturnType<typeof setTimeout> | null = null;
 
 	/** Feed from `vscode.workspace.onDidChangeWorkspaceFolders`. */
@@ -134,6 +134,9 @@ export class WorkspaceFolderSwitcher {
 	 * Request the Explorer to show exactly `cwd`. No-ops unless the window is
 	 * our managed workspace, the target is the root or inside it (legacy
 	 * sibling worktrees are excluded) and the folder isn't already shown.
+	 * For a session worktree the folder is displayed as `<project> (exo-<N>)`
+	 * — the leaf basename is the project name (so `docker compose` sees the
+	 * same project), while the parent `exo-<N>` carries the session number.
 	 */
 	public follow(root: string, cwd: string): void {
 		if (!isManagedWorkspace(root)) {
@@ -145,7 +148,12 @@ export class WorkspaceFolderSwitcher {
 		if (this.isCurrent(root, cwd)) {
 			return;
 		}
-		this._pending = { root, target: cwd };
+		const branch = cwd !== root ? worktreeBranchFromPath(cwd) : null;
+		this._pending = {
+			root,
+			target: cwd,
+			name: branch ? `${path.basename(cwd)} (${branch})` : undefined,
+		};
 		this._drain();
 	}
 
@@ -196,10 +204,10 @@ export class WorkspaceFolderSwitcher {
 				ok = vscode.workspace.updateWorkspaceFolders(1, 1);
 			} else if (folders.length === 1) {
 				// Insert the worktree as the second folder.
-				ok = vscode.workspace.updateWorkspaceFolders(1, 0, { uri: vscode.Uri.file(pending.target) });
+				ok = vscode.workspace.updateWorkspaceFolders(1, 0, { uri: vscode.Uri.file(pending.target), name: pending.name });
 			} else {
 				// Replace folders[1] with the newly active worktree.
-				ok = vscode.workspace.updateWorkspaceFolders(1, 1, { uri: vscode.Uri.file(pending.target) });
+				ok = vscode.workspace.updateWorkspaceFolders(1, 1, { uri: vscode.Uri.file(pending.target), name: pending.name });
 			}
 			if (!ok) {
 				this._inFlight = false;

@@ -131,15 +131,45 @@ async function worktreeBranchExists(root: string, number: number): Promise<boole
 }
 
 /**
+ * A filesystem-safe slug of the project folder name (basename of `root`). Used
+ * as the worktree's leaf folder name so tools that derive an identity from the
+ * cwd basename (e.g. `docker compose` project name) see the same value as they
+ * would in the main project. Falls back to `workspace` when the root has no
+ * usable basename.
+ */
+export function sanitizeProjectName(root: string): string {
+	const base = path.basename(root) || 'workspace';
+	const slug = base
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '');
+	return slug || 'workspace';
+}
+
+/**
+ * The session branch (`exo-<N>`) for a worktree path. The worktree's leaf
+ * folder is the project name, not `exo-<N>` (the number lives in the parent
+ * dir), so callers that need the branch must extract it from the path rather
+ * than use `path.basename`. Returns null when the path has no `exo-<N>` segment.
+ */
+export function worktreeBranchFromPath(p: string): string | null {
+	const m = /(?:^|[\\/])exo-(\d+)(?:[\\/]|$)/.exec(p);
+	return m ? `exo-${m[1]}` : null;
+}
+
+/**
  * Create a worktree for a new session. Worktrees live inside the repo under
- * `.exo/worktrees/exo-<N>` (branch `exo-<N>`, local-only, never pushed), `N`
- * being the first free number on disk — so the folder/branch name always
- * matches the session's ordinal number (`exo-<N>` terminal, header badge).
- * "Free" means no `exo-<N>` worktree folder AND no lingering `exo-<N>` branch
- * (a deleted session's unmerged branch may outlive its folder).
- * Being a child of the trusted repo root keeps them workspace-trusted when the
- * Explorer follows the active session. Returns null when not a git repository
- * (shared root).
+ * `.exo/worktrees/exo-<N>/<project>` — the git worktree root is the project
+ * leaf folder (so its basename matches the main project, keeping `docker
+ * compose` project names stable), while the session's ordinal number `N` lives
+ * in the parent dir (so the folder stays unique per session and the branch
+ * `exo-<N>` is local-only, never pushed). `N` is the first free number on disk
+ * — so the parent dir/branch name always matches the session's ordinal number
+ * (`exo-<N>` terminal, header badge). "Free" means no `exo-<N>` worktree dir
+ * AND no lingering `exo-<N>` branch (a deleted session's unmerged branch may
+ * outlive its folder). Being a child of the trusted repo root keeps them
+ * workspace-trusted when the Explorer follows the active session. Returns null
+ * when not a git repository (shared root).
  */
 export async function createWorktree(root: string): Promise<WorktreeInfo | null> {
 	if (!(await isGitRepository(root))) {
@@ -151,9 +181,10 @@ export async function createWorktree(root: string): Promise<WorktreeInfo | null>
 		number++;
 	}
 	const name = `exo-${number}`;
-	const target = path.join(root, '.exo', 'worktrees', name);
+	const target = path.join(root, '.exo', 'worktrees', name, sanitizeProjectName(root));
 	try {
 		await ensureGitExclude(root);
+		await fs.promises.mkdir(path.dirname(target), { recursive: true });
 		await runGit(['worktree', 'add', '-b', name, target], root);
 	} catch (err) {
 		console.error('[Exo worktree] create failed:', err);
@@ -283,12 +314,21 @@ export async function removeWorktree(worktreePath: string, opts?: { confirmed?: 
 		}
 		// Drop the now-unlinked branch too. Safe: `-d` only deletes when the
 		// branch is fully merged (or via its upstream) — otherwise it fails and
-		// the branch stays.
-		const branch = path.basename(worktreePath);
+		// the branch stays. The branch is `exo-<N>` (from the parent dir), not
+		// the worktree's leaf folder (which is the project name).
+		const branch = worktreeBranchFromPath(worktreePath);
+		if (branch) {
+			try {
+				await runGit(['branch', '-d', branch], path.dirname(worktreePath));
+			} catch {
+				// branch unmerged or already gone — keep it.
+			}
+		}
+		// Best-effort: remove the now-empty `exo-<N>` parent dir.
 		try {
-			await runGit(['branch', '-d', branch], path.dirname(worktreePath));
+			await fs.promises.rmdir(path.dirname(worktreePath));
 		} catch {
-			// branch unmerged or already gone — keep it.
+			// not empty or already gone — fine.
 		}
 		return true;
 	} catch (err) {
@@ -322,7 +362,10 @@ export async function mergeWorktreeToMain(worktreePath: string, root: string): P
 		if (ahead === 0) {
 			return (await hasUncommittedChanges(worktreePath)) ? { status: 'uncommitted' } : { status: 'clean-merged' };
 		}
-		const branch = path.basename(worktreePath);
+		const branch = worktreeBranchFromPath(worktreePath);
+		if (!branch) {
+			return { status: 'not-merged', detail: 'worktree branch is not resolvable' };
+		}
 		try {
 			await runGit(['merge', '--ff-only', branch], root);
 		} catch (err) {
