@@ -17,7 +17,16 @@ import {
 	type PermissionHandlerContext,
 } from '../acp/handlers/permission';
 import { applyToolCallPatch, type EditSpec } from '../acp/handlers/util';
-import { createWorktree, registerWorktreeInScm, removeWorktree, sessionHasUncommittedWork } from '../worktree';
+import { createWorktree, isGitRepository, registerWorktreeInScm, removeWorktree, sessionHasUncommittedWork } from '../worktree';
+import {
+	WorkspaceFolderSwitcher,
+	dismissWorkspaceModePrompt,
+	enterManagedWorkspace,
+	getPinnedRoot,
+	isExoWorktreePath,
+	isWorkspaceModePromptDismissed,
+	pinRoot,
+} from '../workspaceMode';
 import { StreamThrottle } from './StreamThrottle';
 import type { AvailableCommand, PlanEntry } from '@agentclientprotocol/sdk';
 
@@ -171,6 +180,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private readonly _htmlProvider: HtmlProvider;
 	private readonly _extensionUri: vscode.Uri;
 
+	/** Pinned repo root (globalState). The Explorer may follow sessions — this must not. */
+	private _workspaceRoot: string;
+
+	/** Serialized, coalescing driver for the Explorer-follow folder switch. */
+	private readonly _workspaceSwitcher = new WorkspaceFolderSwitcher();
+
 	constructor(
 		extensionUri: vscode.Uri,
 		public readonly configWatcher: ConfigWatcher,
@@ -180,6 +195,43 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this._extensionUri = extensionUri;
 		this._messageHandler = new WebviewMessageHandler(this);
 		this._htmlProvider = new HtmlProvider(extensionUri);
+		this._workspaceRoot = this.guessWorkspaceRoot();
+	}
+
+	/**
+	 * Best-effort root before mementos are loaded (constructor). Correct for a
+	 * single-folder window; may be wrong for a managed workspace reopened on a
+	 * session worktree — re-resolved in `handleReady` from the pinned root.
+	 */
+	private guessWorkspaceRoot(): string {
+		const folders = vscode.workspace.workspaceFolders;
+		if (folders && folders.length > 0) {
+			const first = folders[0].uri.fsPath;
+			if (!isExoWorktreePath(first)) {
+				return first;
+			}
+		}
+		return process.cwd();
+	}
+
+	/**
+	 * Resolve the repo root for session cwds. Adopts the current first
+	 * workspace folder as the root — EXCEPT when it is a session worktree (a
+	 * managed workspace may reopen on the last active session's folder), in
+	 * which case the pinned root (set during the one-time migration, before the
+	 * reload) is used. This keeps the pin from leaking across projects. Requires
+	 * loaded mementos.
+	 */
+	private resolveWorkspaceRoot(): string {
+		const folders = vscode.workspace.workspaceFolders;
+		if (folders && folders.length > 0) {
+			const first = folders[0].uri.fsPath;
+			if (!isExoWorktreePath(first)) {
+				pinRoot(this.globalState, first);
+				return first;
+			}
+		}
+		return getPinnedRoot(this.globalState) ?? process.cwd();
 	}
 
 	public register(context: vscode.ExtensionContext): void {
@@ -190,6 +242,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 					return contents.get(uri.toString()) ?? '';
 				},
 			}),
+			vscode.workspace.onDidChangeWorkspaceFolders(() => this._workspaceSwitcher.onWorkspaceFoldersChanged()),
 			vscode.window.onDidCloseTerminal((terminal) => {
 				for (const [sessionId, t] of this._sessionTerminals) {
 					if (t === terminal) {
@@ -241,9 +294,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		return this._activeSessionId;
 	}
 
-	/** cwd of the active session (fallback: workspace root). */
+	/** cwd of the active session (fallback: pinned workspace root). */
 	get cwd(): string {
-		return this.session?.cwd ?? this.getWorkspaceRoot();
+		return this.session?.cwd ?? this._workspaceRoot;
 	}
 
 	get messages(): ChatMessage[] {
@@ -339,8 +392,53 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.view?.webview.postMessage({ type: 'showSessionPicker' });
 	}
 
+	/**
+	 * One-time onboarding: in a single-folder window, offer reopening the
+	 * project as the managed Exo workspace — the prerequisite for reload-free
+	 * Explorer-follow (see workspaceMode.ts). Prompted on extension activation.
+	 */
+	public async maybePromptWorkspaceMode(): Promise<void> {
+		try {
+			const folders = vscode.workspace.workspaceFolders;
+			if (!folders || folders.length !== 1 || vscode.workspace.workspaceFile) {
+				return; // empty window or already a workspace (ours or the user's)
+			}
+			if (!vscode.workspace.isTrusted) {
+				return;
+			}
+			if (isWorkspaceModePromptDismissed(this.globalState)) {
+				return;
+			}
+			if (!vscode.workspace.getConfiguration('exo').get<boolean>('followSessionFolder', true)) {
+				return;
+			}
+			if (folders[0].uri.fsPath !== this._workspaceRoot) {
+				return;
+			}
+			if (!(await isGitRepository(this._workspaceRoot))) {
+				return;
+			}
+			const choice = await vscode.window.showInformationMessage(
+				'Exo: чтобы Explorer автоматически следовал за активной сессией, открой проект как воркспейс Exo.',
+				'Переоткрыть как воркспейс Exo',
+				'Не сейчас',
+				'Больше не спрашивать',
+			);
+			if (choice === 'Переоткрыть как воркспейс Exo') {
+				// Pin BEFORE the reload — workspaceState dies with the workspace id.
+				pinRoot(this.globalState, this._workspaceRoot);
+				await enterManagedWorkspace(this._workspaceRoot);
+			} else if (choice === 'Больше не спрашивать') {
+				dismissWorkspaceModePrompt(this.globalState);
+			}
+		} catch (err) {
+			console.error('[Exo] workspace mode prompt failed:', err);
+		}
+	}
+
 	/** Webview ready: eager connect to the persisted active tab; tabs load lazily. */
 	public async handleReady(): Promise<void> {
+		this._workspaceRoot = this.resolveWorkspaceRoot();
 		if (!this._readyHandled) {
 			this._readyHandled = true;
 			this.restorePersistedUiState();
@@ -1157,9 +1255,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			}
 		}
 		this._activeSessionId = null;
+		this._workspaceSwitcher.showRoot(this._workspaceRoot);
 		this.persistUiStateSoon();
 		this.view?.webview.postMessage({ type: 'showEmpty' });
 		this.sendTabs();
+	}
+
+	/** Ask the Explorer to show the given cwd (no-op unless in managed workspace mode). */
+	private followSessionFolder(cwd: string): void {
+		this._workspaceSwitcher.follow(this._workspaceRoot, cwd);
 	}
 
 	/** Show a runtime's chat in the webview. */
@@ -1172,6 +1276,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			}
 		}
 		this._activeSessionId = runtime.id;
+		this.followSessionFolder(runtime.cwd);
 		this.persistUiStateSoon();
 		this.view?.webview.postMessage({
 			type: 'showChat',
@@ -1679,12 +1784,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		this.sessions.clear();
 	}
 
+	/** Pinned repo root — the Explorer may follow the active session, this never moves. */
 	public getWorkspaceRoot(): string {
-		const folders = vscode.workspace.workspaceFolders;
-		if (folders && folders.length > 0) {
-			return folders[0].uri.fsPath;
-		}
-		return process.cwd();
+		return this._workspaceRoot;
 	}
 
 	/** Validate dropped paths: return valid files and the rejected count (folders/errors). */

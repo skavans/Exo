@@ -6,10 +6,18 @@
  * freshly created worktree (own folder + local-only branch). When it isn't,
  * sessions share the workspace root (no isolation).
  *
+ * Worktrees live INSIDE the repo at `.exo/worktrees/<slug>` (not as a sibling
+ * as before). That keeps them under the trusted repo root: VS Code's workspace
+ * trust is path-based and parent-inclusive, so the managed Exo workspace can
+ * switch the Explorer folder to a session's worktree without dropping the
+ * window into Restricted Mode. `.exo/` is hidden from git via `info/exclude`
+ * (never committed, never shows in `git status`).
+ *
  * Pure `git worktree` CLI — no dependency on the VS Code git extension API or
  * version, so it stays aligned with `engines.vscode: ^1.73.0`.
  */
 import * as cp from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
@@ -43,9 +51,55 @@ export async function isGitRepository(root: string): Promise<boolean> {
 }
 
 /**
- * Create a worktree for a new session. Worktrees live in a sibling
- * `.exo-worktrees/<slug>` directoy; branch is `exo/<slug>` (local-only).
- * Returns null when not a git repository (fall back to the shared root).
+ * The repo's common git dir (absolute), or null when not resolvable. Works for
+ * plain clones (`.git` dir), worktrees and submodules (`.git` file) alike.
+ */
+async function gitCommonDir(root: string): Promise<string | null> {
+	try {
+		const out = await runGit(['rev-parse', '--git-common-dir'], root);
+		const dir = out.trim();
+		if (!dir) {
+			return null;
+		}
+		return path.isAbsolute(dir) ? dir : path.resolve(root, dir);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Hide `.exo/` from git: append `/.exo/` to the repo's `info/exclude` so the
+ * managed workspace file and worktree copies never show up in `git status` and
+ * are never committed. Best-effort — any failure only means the dir is visible.
+ */
+export async function ensureGitExclude(root: string): Promise<void> {
+	try {
+		const common = await gitCommonDir(root);
+		if (!common) {
+			return;
+		}
+		const excludePath = path.join(common, 'info', 'exclude');
+		let content = '';
+		try {
+			content = await fs.promises.readFile(excludePath, 'utf8');
+		} catch {
+			// info/exclude may not exist yet
+		}
+		if (content.split(/\r?\n/).some((line) => line.trim() === '/.exo/')) {
+			return;
+		}
+		const line = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+		await fs.promises.writeFile(excludePath, content + line + '/.exo/\n', 'utf8');
+	} catch (err) {
+		console.error('[Exo worktree] git exclude failed:', err);
+	}
+}
+
+/**
+ * Create a worktree for a new session. Worktrees live inside the repo under
+ * `.exo/worktrees/<slug>` (branch `exo/<slug>`, local-only). Being a child of
+ * the trusted repo root keeps them workspace-trusted when the Explorer follows
+ * the active session. Returns null when not a git repository (shared root).
  */
 export async function createWorktree(root: string): Promise<WorktreeInfo | null> {
 	if (!(await isGitRepository(root))) {
@@ -53,8 +107,9 @@ export async function createWorktree(root: string): Promise<WorktreeInfo | null>
 	}
 	const slug = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 	const branch = `exo/${slug}`;
-	const target = path.join(path.dirname(root), '.exo-worktrees', slug);
+	const target = path.join(root, '.exo', 'worktrees', slug);
 	try {
+		await ensureGitExclude(root);
 		await runGit(['worktree', 'add', '-b', branch, target], root);
 	} catch (err) {
 		console.error('[Exo worktree] create failed:', err);
