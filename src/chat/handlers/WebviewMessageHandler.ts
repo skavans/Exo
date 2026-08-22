@@ -347,7 +347,7 @@ export class WebviewMessageHandler {
 
 		await this.walkFiles(cwd, cwd, (relPath, absPath) => {
 			const rel = relPath.replace(/\\/g, '/');
-			if (rel.startsWith('.git/') || rel.includes('/node_modules/') || rel.startsWith('.exo-worktrees/')) {
+			if (rel.startsWith('.git/') || rel.includes('/node_modules/') || rel.startsWith('.exo/') || rel.startsWith('.exo-worktrees/')) {
 				return;
 			}
 			const pathLower = rel.toLowerCase();
@@ -397,7 +397,7 @@ export class WebviewMessageHandler {
 			return;
 		}
 		for (const entry of entries) {
-			if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.exo-worktrees') {
+			if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.exo' || entry.name === '.exo-worktrees') {
 				continue;
 			}
 			const abs = path.join(current, entry.name);

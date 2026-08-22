@@ -56,6 +56,13 @@ export function activate(context: vscode.ExtensionContext) {
 		}),
 	);
 
+	// One-time onboarding: offer reopening a single-folder window as the managed
+	// Exo workspace (unlocks reload-free Explorer-follow). Delayed so it doesn't
+	// race the window load; see workspaceMode.ts.
+	setTimeout(() => {
+		void chatProvider.maybePromptWorkspaceMode();
+	}, 1500);
+
 }
 
 export function deactivate() {}
