@@ -24,6 +24,9 @@ Because reading and writing code is much better in a real editor than in a TUI:
 - Every file edit the agent makes lands in a **real diff editor** you can inspect
   and approve before it happens.
 - One click on any mentioned path opens the file at the exact line.
+- Every session works in its **own isolated git worktree** — your main branch
+  stays clean no matter what the agent does, and results land in main with one
+  click.
 
 Everything the agent produces is rendered against the rest of your VS Code
 workspace, not in an isolated terminal box.
@@ -44,14 +47,26 @@ edges and report them.
 
 ## Features
 
-- `/` slash-command picker + `@` file attachment (fuzzy-matched), like the good old
-  days.
-- Two permission modes:
+- `/` slash-command picker + `@` file attachment (fuzzy-matched) + drag-drop of
+  files and images, like the good old days.
+- Two permission modes, flipped live with the Auto-Allow toggle in the input:
   - **default** — every agent permission request is shown for your review, with
     allow / reject / follow-up options;
   - **auto** — requests are auto-approved client-side (yolo mode).
+- **Parallel sessions** — each tab is its own agent process, so you can run
+  multiple agents at once and switch between them freely; sessions keep working
+  in the background.
+- **Isolated git worktree per session** — every new session spawns its agent in
+  a fresh `exo-<N>` git worktree with its own branch, so your `main` is never
+  touched. The worktree shows up in the Explorer and Source Control, each session
+  gets its own `exo-<N>` terminal, and results land in `main` with a single
+  **merge** click (commit + integrate + safe fast-forward, handled by the agent
+  and the client together).
+- A **session picker** in the header: jump between open sessions, reopen recent
+  ones, or delete them — all in one menu.
 - Automatic theming: the UI adapts to your current VS Code color theme.
-- Syntax highlighting via Shiki (bundled, no WASM, instant).
+- Syntax highlighting via Shiki (bundled, no WASM, instant), KaTeX math, and a
+  crash-safe message renderer.
 - Persisted draft text and attached files across restarts; sessions are
   agent-owned and resumable.
 
