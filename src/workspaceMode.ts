@@ -30,7 +30,6 @@ import * as vscode from 'vscode';
 import { ensureGitExclude } from './worktree';
 
 export const EXO_DIR_NAME = '.exo';
-const WORKSPACE_FILE_NAME = 'exo.code-workspace';
 /** The stable, never-changing first workspace folder (empty dir inside the repo). */
 const STABLE_FOLDER_DIR = 'workspace-stable';
 /** Display name of the stable folder in the Explorer (dot-name reads as hidden/internal). */
@@ -38,9 +37,19 @@ const STABLE_FOLDER_NAME = '.exo';
 /** globalState key for the pinned repo root. */
 const WORKSPACE_ROOT_KEY = 'exo.workspaceRoot';
 
+/**
+ * The workspace file is named after the project folder: VS Code titles a
+ * `.code-workspace` window from the FILE's basename (`<name> (Workspace)`) and
+ * ignores the `name` field, so the window shows the project name, not "exo".
+ */
+function workspaceFileName(root: string): string {
+	const base = path.basename(root) || 'workspace';
+	return `${base}.code-workspace`;
+}
+
 /** Absolute path of our managed workspace file for `root`. */
 export function managedWorkspacePath(root: string): string {
-	return path.join(root, EXO_DIR_NAME, WORKSPACE_FILE_NAME);
+	return path.join(root, EXO_DIR_NAME, workspaceFileName(root));
 }
 
 /** Absolute path of the stable (index 0) workspace folder for `root`. */
@@ -107,7 +116,6 @@ export async function enterManagedWorkspace(root: string): Promise<void> {
 				{ path: stableWorkspacePath(root), name: STABLE_FOLDER_NAME },
 				{ path: root },
 			],
-			name: `Exo · ${path.basename(root)}`,
 		},
 		null,
 		'\t',
