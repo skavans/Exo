@@ -4,6 +4,7 @@
   "publisher": "AntonSubbotin",
   "description": "Native VS Code client for ACP agents: spawns your agent over stdio, renders chat, and handles file access, permissions and plans with native editor UX.",
   "version": "0.6.5",
+  "icon": "media/icon-round.png",
   "license": "GPL-3.0",
   "repository": {
     "type": "git",
