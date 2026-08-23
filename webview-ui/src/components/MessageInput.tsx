@@ -254,9 +254,9 @@ export function MessageInput({ onSend, sessionId, commands, config, configPendin
 				return;
 			}
 			textareaRef.current.selectionStart = nextCursor;
-			extareaRef.current.selectionEnd = nextCursor;
+			textareaRef.current.selectionEnd = nextCursor;
 			autoResize();
-			extareaRef.current.focus({ preventScroll: true });
+			textareaRef.current.focus({ preventScroll: true });
 		});
 	}, [activePicker, closePicker, text]);
 

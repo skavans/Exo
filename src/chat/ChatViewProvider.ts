@@ -17,7 +17,7 @@ import {
 	cancelAllPermissions,
 	type PermissionHandlerContext,
 } from '../acp/handlers/permission';
-import { applyToolCallPatch, type EditSpec } from '../acp/handlers/util';
+import { applyToolCallPatch, createToolCallInfo, type EditSpec } from '../acp/handlers/util';
 import {
 	createWorktree,
 	ensureGitExclude,
@@ -719,16 +719,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	/** Close the tab: kill the agent process. Session stays in the recent menu. */
 	public async closeTab(tabId: string): Promise<void> {
 		// Cancel an in-flight create/load if its loading tab is closed.
-		const pending = this._pendingSessions.get(tabId);
-		if (pending) {
-			pending.cancelled = true;
-			this._pendingSessions.delete(tabId);
-			this._drafts.delete(tabId);
-			// A `new` pending never became a session — return its number.
-			if (pending.mode === 'new') {
-				this.freeNumber(pending.number);
-			}
-		}
+		this.cancelPending(tabId);
 
 		// Optimistic: remove the tab from the UI immediately.
 		this._tabList = this._tabList.filter((t) => t.tabId !== tabId);
@@ -770,17 +761,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	/** Permanently delete a session (from the recent menu). Optimistic UI; worktree handling in background. */
 	public async deleteSession(tabId: string): Promise<void> {
 		// Cancel an in-flight create/load if its loading tab is deleted.
-		const pending = this._pendingSessions.get(tabId);
-		if (pending) {
-			pending.cancelled = true;
-			this._pendingSessions.delete(tabId);
-			this._drafts.delete(tabId);
-			// A `new` pending never resolved into a real session — its number
-			// was provisionally allocated and is now free again.
-			if (pending.mode === 'new') {
-				this.freeNumber(pending.number);
-			}
-		}
+		this.cancelPending(tabId);
 
 		const entry = this._sessionRegistry.get(tabId);
 		const listEntry = this._tabList.find((t) => t.tabId === tabId);
@@ -895,24 +876,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		if (!cfg) {
 			return;
 		}
-		const client = new AcpClient(cfg, {
-			onAgentMessageChunk: () => {},
-			onAgentThoughtChunk: () => {},
-			onUserMessageChunk: () => {},
-			onToolCallCreate: () => {},
-			onToolCallUpdate: () => {},
-			onPlan: () => {},
-			onUsageUpdate: () => {},
-			onCurrentModeUpdate: () => {},
-			onConfigOptionUpdate: () => {},
-			onAvailableCommandsUpdate: () => {},
-			onSessionInfoUpdate: () => {},
-			onReadTextFile: () => Promise.reject(new Error('no fs in temp agent')),
-			onWriteTextFile: () => Promise.resolve(),
-			onRequestPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }),
-			onError: (e) => console.error('[Exo ACP] temp agent error:', e),
-			onDisconnect: () => {},
-		});
+		const client = new AcpClient(cfg, NOOP_ACP_CALLBACKS);
 		try {
 			await client.connect(cwd);
 			if (client.canDelete) {
@@ -957,6 +921,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	private freeNumber(n: number): void {
 		if (n > 0) {
 			this._freeNumbers.add(n);
+		}
+	}
+
+	/**
+	 * Cancel an in-flight create/load for a tab being closed/deleted: mark it
+	 * cancelled so a late resolve/fail becomes a no-op, drop its draft, and
+	 * release the number a `new` pending provisionally held.
+	 */
+	private cancelPending(tabId: string): void {
+		const pending = this._pendingSessions.get(tabId);
+		if (!pending) {
+			return;
+		}
+		pending.cancelled = true;
+		this._pendingSessions.delete(tabId);
+		this._drafts.delete(tabId);
+		if (pending.mode === 'new') {
+			this.freeNumber(pending.number);
 		}
 	}
 
@@ -1201,18 +1183,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 	 *  session-activation `show(true)` below becomes instant instead of
 	 *  spawning bash/zsh on the spot. `preserveFocus` keeps the chat input. */
 	private async createPendingTerminal(pending: PendingSession, cwd: string): Promise<vscode.Terminal> {
-		const existing = this._sessionTerminals.get(pending.id);
+		const terminal = await this.getOrCreateSessionTerminal(pending.id, pending.number, cwd);
+		terminal.show(true);
+		return terminal;
+	}
+
+	/** Get the runtime's terminal (usually created during the pending phase).
+	 *  Reuses a live `exo-<N>` terminal that survived a window reload /
+	 *  extension-host restart (found in `vscode.window.terminals`) instead of
+	 *  creating a second instance. */
+	private async ensureSessionTerminal(runtime: SessionRuntime): Promise<vscode.Terminal> {
+		return this.getOrCreateSessionTerminal(runtime.id, runtime.number, runtime.cwd);
+	}
+
+	/** Shared terminal acquisition: existing (keyed) → live `exo-<N>` survivor → create. */
+	private async getOrCreateSessionTerminal(key: string, number: number, cwd: string): Promise<vscode.Terminal> {
+		const existing = this._sessionTerminals.get(key);
 		if (existing) {
 			return existing;
 		}
-		const live = await this.findLiveSessionTerminal(pending.number);
+		const live = await this.findLiveSessionTerminal(number);
 		if (live) {
-			this._sessionTerminals.set(pending.id, live);
+			this._sessionTerminals.set(key, live);
 			return live;
 		}
-		const terminal = this.createSessionTerminal(pending.number, cwd);
-		this._sessionTerminals.set(pending.id, terminal);
-		terminal.show(true);
+		const terminal = this.createSessionTerminal(number, cwd);
+		this._sessionTerminals.set(key, terminal);
 		return terminal;
 	}
 
@@ -1224,25 +1220,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		}
 		this._sessionTerminals.delete(fromId);
 		this._sessionTerminals.set(toId, terminal);
-	}
-
-	/** Get the runtime's terminal (usually created during the pending phase).
-	 *  Reuses a live `exo-<N>` terminal that survived a window reload /
-	 *  extension-host restart (found in `vscode.window.terminals`) instead of
-	 *  creating a second instance. */
-	private async ensureSessionTerminal(runtime: SessionRuntime): Promise<vscode.Terminal> {
-		const existing = this._sessionTerminals.get(runtime.id);
-		if (existing) {
-			return existing;
-		}
-		const live = await this.findLiveSessionTerminal(runtime.number);
-		if (live) {
-			this._sessionTerminals.set(runtime.id, live);
-			return live;
-		}
-		const terminal = this.createSessionTerminal(runtime.number, runtime.cwd);
-		this._sessionTerminals.set(runtime.id, terminal);
-		return terminal;
 	}
 
 	/**
@@ -1376,13 +1353,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 					}
 					return;
 				}
-				const tc: ToolCallInfo = {
-					name: 'other',
-					args: {},
-					status: mapToolStatus(update.status),
-					summary: update.title ?? update.kind ?? '',
-					toolCallId: update.toolCallId,
-				};
+				const tc = createToolCallInfo(update.toolCallId, update.title, update.kind);
+				tc.status = mapToolStatus(update.status);
 				applyToolCallPatch(tc, update);
 				runtime.pushToolCallToStreaming(tc);
 				runtime.toolCallInfos.set(update.toolCallId, tc);
@@ -2000,9 +1972,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		return {
 			getWorkspaceRoot: () => runtime.cwd,
 			files: runtime.files,
-			toolCallInfos: runtime.toolCallInfos,
-			postUpdateMessages: () => this.updateMessages(),
-			onToolCallCreated: (tc) => runtime.pushToolCallToStreaming(tc),
 		};
 	}
 
@@ -2381,3 +2350,23 @@ function makeFallbackTitle(text: string): string {
 		? `${line.slice(0, FALLBACK_TITLE_MAX_LEN - 1).trimEnd()}…`
 		: line;
 }
+
+/** No-op ACP callbacks for a throwaway agent (e.g. temp session/delete). */
+const NOOP_ACP_CALLBACKS: AcpClientCallbacks = {
+	onAgentMessageChunk: () => {},
+	onAgentThoughtChunk: () => {},
+	onUserMessageChunk: () => {},
+	onToolCallCreate: () => {},
+	onToolCallUpdate: () => {},
+	onPlan: () => {},
+	onUsageUpdate: () => {},
+	onCurrentModeUpdate: () => {},
+	onConfigOptionUpdate: () => {},
+	onAvailableCommandsUpdate: () => {},
+	onSessionInfoUpdate: () => {},
+	onReadTextFile: () => Promise.reject(new Error('no fs in temp agent')),
+	onWriteTextFile: () => Promise.resolve(),
+	onRequestPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }),
+	onError: (e) => console.error('[Exo ACP] temp agent error:', e),
+	onDisconnect: () => {},
+};

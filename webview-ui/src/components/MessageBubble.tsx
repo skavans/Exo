@@ -8,6 +8,7 @@ import type { ChatMessage, ToolCallInfo, ActivityBlock } from '../types';
 import { EMPTY_RESPONSE } from '../types';
 import { vscode } from '../vscode';
 import { highlightCode } from '../shiki';
+import { escapeHtml } from '../escape';
 
 // Configure marked: GFM + soft line breaks (models emit single newlines as
 // visual breaks; breaks:true keeps them instead of collapsing to spaces).
@@ -100,15 +101,6 @@ function extractCandidateFileLinks(content: string): string[] {
 		if (parsed) candidates.add(parsed.lookupPath);
 	}
 	return Array.from(candidates);
-}
-
-function escapeHtml(text: string): string {
-	return text
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&#39;');
 }
 
 /**

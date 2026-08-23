@@ -43,13 +43,6 @@ export interface Plan {
 	items: PlanItem[];
 }
 
-/** Agent session (from ACP session/list) — no local storage. */
-export interface AcpSessionInfo {
-	sessionId: string;
-	title?: string | null;
-	updatedAt?: string | null;
-}
-
 /** Tab lifecycle status (host-side, from updateTabs). */
 export type TabStatus = 'idle' | 'running' | 'awaiting' | 'loading';
 
@@ -120,13 +113,6 @@ export function formatAgentLabel(agentInfo: AgentInfo | null | undefined): strin
 
 /** Marker for an empty LLM response */
 export const EMPTY_RESPONSE = '(empty response)';
-
-/** Compact number formatting: 1 → "1", 1200 → "1.2K", 12000 → "12K" */
-export function formatCompactNumber(n: number): string {
-	if (n < 1000) return `${n}`;
-	if (n < 10_000) return `${(n / 1000).toFixed(1)}K`;
-	return `${Math.round(n / 1000)}K`;
-}
 
 /* ============================================================
    Session config (mode / model / thought_level) — ACP configOptions

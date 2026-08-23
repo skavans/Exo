@@ -25,6 +25,8 @@
 import { createHighlighterCoreSync } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 
+import { escapeHtml, escapeAttr } from './escape';
+
 import darkPlus from '@shikijs/themes/dark-plus';
 import lightPlus from '@shikijs/themes/light-plus';
 import githubDark from '@shikijs/themes/github-dark';
@@ -259,10 +261,6 @@ export function getThemeVersion(): number {
 	return themeVersion;
 }
 
-function escapeHtml(s: string): string {
-	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
 export function highlightCode(code: string, lang: string | undefined): string {
 	let resolvedLang = lang ? (lang.toLowerCase().trim() || '') : '';
 	if (LANG_ALIASES[resolvedLang]) resolvedLang = LANG_ALIASES[resolvedLang];
@@ -275,8 +273,4 @@ export function highlightCode(code: string, lang: string | undefined): string {
 	} catch {
 		return `<pre data-lang="${escapeAttr(resolvedLang)}"><code>${escapeHtml(code)}</code></pre>`;
 	}
-}
-
-function escapeAttr(s: string): string {
-	return escapeHtml(s).replace(/"/g, '&quot;');
 }

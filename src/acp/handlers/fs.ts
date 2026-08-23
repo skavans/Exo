@@ -22,15 +22,12 @@ import type {
 } from '@agentclientprotocol/sdk';
 
 import { Files } from '../../files/Files';
-import type { ToolCallRegistryContext } from './util';
 import { collectDiagnostics } from '../../tools/diagnostics';
 
 /**
  * Context ChatViewProvider supplies to the fs handlers.
- * Tool-call registry exists for future integrations (potentially showing fs
- * operations as chips); read/write don't use it yet.
  */
-export interface FsHandlerContext extends ToolCallRegistryContext {
+export interface FsHandlerContext {
 	/** Absolute path to the workspace root */
 	getWorkspaceRoot(): string;
 	/** Single file cache (used for both reading and refresh-after-write) */

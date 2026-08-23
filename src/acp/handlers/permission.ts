@@ -30,7 +30,7 @@ import type {
 	PendingPermission,
 	ToolCallInfo,
 } from '../../chat/types';
-import { applyToolCallPatch, extractEditSpec, type EditSpec, type ToolCallRegistryContext } from './util';
+import { applyToolCallPatch, createToolCallInfo, extractEditSpec, type EditSpec, type ToolCallRegistryContext } from './util';
 import { isOpenCodeEditArgs, restoreOpenCodeEditSpec } from '../../vendor/opencode';
 
 /** Context provided by ChatViewProvider. */
@@ -80,13 +80,7 @@ export async function handleRequestPermission(
 	// 1. Find or create the ToolCallInfo, then apply the unified upsert patch.
 	let tc = ctx.toolCallInfos.get(toolCallId);
 	if (!tc) {
-		tc = {
-			name: 'other',
-			args: {},
-			status: 'pending',
-			summary: params.toolCall.title ?? params.toolCall.kind ?? 'Permission requested',
-			toolCallId,
-		};
+		tc = createToolCallInfo(toolCallId, params.toolCall.title, params.toolCall.kind);
 		ctx.toolCallInfos.set(toolCallId, tc);
 		ctx.onToolCallCreated?.(tc);
 	}
@@ -179,12 +173,10 @@ export function resolvePermission(
 			// allow_* → success, reject_* → rejected
 			const option = tc.permissionOptions?.find((o) => o.optionId === decision.optionId);
 			const isReject = option?.kind === 'reject_once' || option?.kind === 'reject_always';
-			tc.status = isReject ? 'rejected' : 'success';
+			clearPermissionState(tc, isReject ? 'rejected' : 'success');
 		} else {
-			tc.status = 'cancelled';
+			clearPermissionState(tc, 'cancelled');
 		}
-		tc.permissionRequestId = undefined;
-		tc.permissionOptions = undefined;
 	}
 
 	pending.resolve({ outcome: decision });
@@ -202,12 +194,17 @@ export function cancelAllPermissions(ctx: PermissionHandlerContext): void {
 	for (const [, pending] of ctx.pendingPermissions) {
 		const tc = ctx.toolCallInfos.get(pending.toolCallId);
 		if (tc) {
-			tc.status = 'cancelled';
-			tc.permissionRequestId = undefined;
-			tc.permissionOptions = undefined;
+			clearPermissionState(tc, 'cancelled');
 		}
 		if (pending.diffKey) ctx.closeDiff?.(pending.diffKey);
 		pending.resolve({ outcome: { outcome: 'cancelled' } });
 	}
 	ctx.pendingPermissions.clear();
+}
+
+/** Finalize a tool call after a permission decision: set status + drop the pending card state. */
+function clearPermissionState(tc: ToolCallInfo, status: ToolCallInfo['status']): void {
+	tc.status = status;
+	tc.permissionRequestId = undefined;
+	tc.permissionOptions = undefined;
 }

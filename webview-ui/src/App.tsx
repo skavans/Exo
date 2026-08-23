@@ -62,6 +62,17 @@ export function App() {
 	const activeSessionIdRef = useRef(activeSessionId);
 	activeSessionIdRef.current = activeSessionId;
 
+	/** Clear all per-session chat state (used when a session view closes). */
+	const resetChatState = useCallback(() => {
+		setMessages([]);
+		setPlan(null);
+		setTokenUsage(null);
+		setTokenLimit(null);
+		setChatLoading(null);
+		setCanMerge(false);
+		setConfigPending(false);
+	}, []);
+
 	// Keep a ref to the latest theme name so applyTheme always reads a fresh
 	// value, never a stale closure (the host message and the MutationObserver
 	// fire independently and in unpredictable order on theme switch).
@@ -168,13 +179,7 @@ export function App() {
 					activeSessionIdRef.current = active;
 					setActiveSessionId(active);
 					if (!active) {
-						setMessages([]);
-						setPlan(null);
-						setTokenUsage(null);
-						setTokenLimit(null);
-						setChatLoading(null);
-						setCanMerge(false);
-						setConfigPending(false);
+						resetChatState();
 					}
 					break;
 				}
@@ -186,11 +191,7 @@ export function App() {
 					const sid = (message.sessionId as string | null) ?? null;
 					activeSessionIdRef.current = sid;
 					setActiveSessionId(sid);
-					setMessages([]);
-					setPlan(null);
-					setTokenUsage(null);
-					setTokenLimit(null);
-					setCanMerge(false);
+					resetChatState();
 					setConfigRequired(false);
 					setWorkspaceModeRequired(false);
 					setChatLoading({
@@ -204,11 +205,9 @@ export function App() {
 					const sid = (message.sessionId as string | null) ?? null;
 					activeSessionIdRef.current = sid;
 					setActiveSessionId(sid);
+					resetChatState();
 					setMessages(message.messages as ChatMessage[]);
 					setPlan(message.plan as Plan | null);
-					setTokenUsage(null);
-					setTokenLimit(null);
-					setCanMerge(false);
 					setConfigRequired(false);
 					setWorkspaceModeRequired(false);
 					setChatLoading(null);
@@ -218,15 +217,10 @@ export function App() {
 				case 'showEmpty': {
 					activeSessionIdRef.current = null;
 					setActiveSessionId(null);
-					setMessages([]);
-					setPlan(null);
-					setTokenUsage(null);
-					setTokenLimit(null);
-					setCanMerge(false);
+					resetChatState();
 					setConfigRequired(false);
 					setWorkspaceModeRequired(false);
 					setChatLoading(null);
-					setConfigPending(false);
 					break;
 				}
 				case 'showSessionPicker': {

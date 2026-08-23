@@ -19,8 +19,8 @@ export interface ToolCallInfo {
 	toolCallId?: string;
 	/** ACP tool kind */
 	kind?: string;
-	/** ACP locations (follow-along) */
-	locations?: unknown[];
+	/** ACP locations (follow-along) — paths/ranges */
+	locations?: Array<{ path?: string; line?: number; endLine?: number } | Record<string, unknown>>;
 	/** ACP content-diff block (standard: path/oldText/newText) — for the Diff Editor on edit-permissions. */
 	diffContent?: { path: string; oldText?: string | null; newText: string };
 	/** ACP permission request id — presence marks a pending approval (renders the card). */

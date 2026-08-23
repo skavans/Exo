@@ -4,6 +4,21 @@ import type { ToolCallUpdate } from '@agentclientprotocol/sdk';
 import type { ToolCallInfo } from '../../chat/types';
 
 /**
+ * Create a fresh ToolCallInfo for a tool call. Shared by the ACP tool_call
+ * handler and the permission handler, so a card's initial state is identical
+ * regardless of which notification created it.
+ */
+export function createToolCallInfo(toolCallId: string, title?: string | null, kind?: string | null): ToolCallInfo {
+	return {
+		name: kind ?? 'other',
+		args: {},
+		status: 'pending',
+		summary: title ?? kind ?? '',
+		toolCallId,
+	};
+}
+
+/**
  * Shared tool-call registry context: runtime map + updateMessages posting +
  * a hook to push a synthetic ToolCallInfo into the current streaming assistant.
  *
@@ -55,7 +70,7 @@ export function applyToolCallPatch(tc: ToolCallInfo, u: ToolCallUpdate): void {
 		if (!tc.name || tc.name === 'other') tc.name = u.kind ?? 'other';
 	}
 	if (u.locations !== undefined && u.locations !== null) {
-		tc.locations = (u.locations as unknown[]) ?? undefined;
+		tc.locations = u.locations as ToolCallInfo['locations'] | undefined;
 	}
 	if (u.content !== undefined && u.content !== null) {
 		const resultText = extractToolText(u.content);

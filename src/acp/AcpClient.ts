@@ -406,12 +406,7 @@ export class AcpClient {
 				}
 			}, 2000);
 		}
-		this._process = null;
-		this._initializeResult = null;
-		this._sessionId = null;
-		this._configOptions = null;
-		this._availableCommands = null;
-		this._clientSelection = {};
+		this._resetState();
 	}
 
 	// --- Internal ---
@@ -496,12 +491,17 @@ export class AcpClient {
 	/** Disconnect handling (process exit). */
 	private _handleDisconnect(): void {
 		this._connection = null;
-		this._sessionId = null;
 		this._process = null;
+		this._resetState();
+		this._callbacks.onDisconnect();
+	}
+
+	/** Drop all protocol/connection state (shared by disconnect + process exit). */
+	private _resetState(): void {
 		this._initializeResult = null;
+		this._sessionId = null;
 		this._configOptions = null;
 		this._availableCommands = null;
 		this._clientSelection = {};
-		this._callbacks.onDisconnect();
 	}
 }
