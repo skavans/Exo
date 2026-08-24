@@ -317,12 +317,35 @@ function getToolIcon(name: string): VNode {
 	}
 }
 
+/** Structured permission-card target, resolved from tool args. */
+interface PermTarget {
+	kind: 'file' | 'command' | 'url' | 'query';
+	file?: { base: string; full: string };
+	command?: string;
+	url?: string;
+	query?: string;
+}
+
+/** Human-readable tool name for the approval card header. */
+const TOOL_LABELS: Record<string, string> = {
+	read: 'Read',
+	edit: 'Edit',
+	delete: 'Delete',
+	move: 'Move',
+	search: 'Search',
+	execute: 'Run',
+	fetch: 'Fetch',
+	switch_mode: 'Switch Mode',
+	think: 'Think',
+};
+
 /**
  * Extract the "operation object" from args to display on the approval card.
- * Looks up common field names by priority; for unknown tools — fall back to the
- * first short scalar string (skipping code/content fields).
+ * Looks up common field names by priority; file paths become base names (full
+ * path kept for the tooltip). For unknown tools — fall back to the first short
+ * scalar string (skipping code/content fields).
  */
-function extractToolTarget(tc: ToolCallInfo): { icon: string; text: string } | null {
+function extractToolTarget(tc: ToolCallInfo): PermTarget | null {
 	const args = tc.args;
 	const pickStr = (...keys: string[]): string | undefined => {
 		for (const k of keys) {
@@ -333,27 +356,64 @@ function extractToolTarget(tc: ToolCallInfo): { icon: string; text: string } | n
 	};
 
 	const filePath = pickStr('filePath', 'filepath', 'path', 'file', 'filename');
-	if (filePath) return { icon: 'fa-file-lines', text: filePath };
+	if (filePath) {
+		const base = filePath.split('/').pop() ?? filePath;
+		return { kind: 'file', file: { base, full: filePath } };
+	}
 
 	const command = pickStr('command', 'cmd', 'script');
-	if (command) {
-		return { icon: 'fa-terminal', text: command.length > 100 ? command.slice(0, 100) + '…' : command };
-	}
+	if (command) return { kind: 'command', command };
 
 	const url = pickStr('url', 'uri');
-	if (url) return { icon: 'fa-link', text: url };
+	if (url) return { kind: 'url', url };
 
 	const query = pickStr('query', 'pattern', 'search', 'regex');
-	if (query) {
-		return { icon: 'fa-magnifying-glass', text: query.length > 100 ? query.slice(0, 100) + '…' : query };
-	}
+	if (query) return { kind: 'query', query };
 
 	const skip = new Set(['oldString', 'newString', 'diff', 'content', 'newText', 'oldText', 'result', 'output', 'patch', 'rawInput']);
 	for (const [key, val] of Object.entries(args)) {
 		if (skip.has(key)) continue;
 		if (typeof val === 'string' && val.length > 0 && val.length < 100) {
-			return { icon: 'fa-circle-dot', text: val };
+			return { kind: 'query', query: val };
 		}
+	}
+
+	return null;
+}
+
+/**
+ * Line counts of the edit diff (removed/added) for the approval card.
+ * Sources, by priority:
+ *  1. `args.diff` — a unified diff (opencode edit form) → count +/- lines.
+ *  2. `args.oldString`/`args.newString` — raw replace pair → line counts.
+ *  3. `diffContent.oldText/newText` — full-file ACP diff block (fallback).
+ */
+function diffStats(tc: ToolCallInfo): { removed: number; added: number } | null {
+	const args = tc.args;
+
+	const unified = typeof args.diff === 'string' ? args.diff : undefined;
+	if (unified) {
+		let removed = 0;
+		let added = 0;
+		for (const line of unified.split('\n')) {
+			if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('\\ ')) continue;
+			if (line.startsWith('+')) added++;
+			else if (line.startsWith('-')) removed++;
+		}
+		return { removed, added };
+	}
+
+	const o = args.oldString;
+	const n = args.newString;
+	if (typeof o === 'string' && typeof n === 'string') {
+		return { removed: o ? o.split('\n').length : 0, added: n ? n.split('\n').length : 0 };
+	}
+
+	if (tc.diffContent) {
+		const oldText = tc.diffContent.oldText;
+		const newText = tc.diffContent.newText;
+		if (newText === undefined) return null;
+		return { removed: oldText ? oldText.split('\n').length : 0, added: newText.split('\n').length };
 	}
 
 	return null;
@@ -736,6 +796,8 @@ function PermissionCard({ tc }: { tc: ToolCallInfo }) {
 	const options = tc.permissionOptions ?? [];
 	const [showDebug, setShowDebug] = useState(false);
 	const target = useMemo(() => extractToolTarget(tc), [tc]);
+	const stats = useMemo(() => diffStats(tc), [tc]);
+	const toolLabel = useMemo(() => TOOL_LABELS[tc.kind ?? ''] ?? tc.name, [tc.kind, tc.name]);
 
 	const handleSelect = useCallback((optionId: string) => {
 		if (!tc.permissionRequestId) return;
@@ -752,11 +814,16 @@ function PermissionCard({ tc }: { tc: ToolCallInfo }) {
 			.sort((a, b) => (a.kind === 'allow_once' ? 0 : 1) - (b.kind === 'allow_once' ? 0 : 1)),
 	[options]);
 
+	const cmdHtml = useMemo(() => {
+		if (target?.kind !== 'command' || !target.command) return null;
+		return highlightCode(target.command, 'bash');
+	}, [target]);
+
 	return (
 		<div class="tool-perm-card">
-			<div class="tool-perm-row" onClick={() => setShowDebug(v => !v)}>
+			<div class="tool-perm-header" onClick={() => setShowDebug(v => !v)}>
 				<span class="tool-perm-icon">{getToolIcon(tc.kind ?? tc.name)}</span>
-				<span class="tool-perm-label">{target ? target.text : (tc.summary || tc.name)}</span>
+				<span class="tool-perm-tool">{toolLabel}</span>
 				{active ? (
 					<span class="tool-perm-actions" onClick={(e) => e.stopPropagation()}>
 						{allowOptions.map((o) => (
@@ -776,6 +843,26 @@ function PermissionCard({ tc }: { tc: ToolCallInfo }) {
 					<span class="tool-perm-resolved">{tc.status === 'rejected' ? 'Rejected' : tc.status === 'cancelled' ? 'Cancelled' : 'Allowed'}</span>
 				)}
 			</div>
+			{target && (
+				<div class="tool-perm-body">
+					{target.kind === 'file' && target.file && (
+						<span class="tool-perm-file" title={target.file.full}>
+							{target.file.base}
+							{stats && (
+								<span class="tool-perm-diff">
+									<span class="tool-perm-diff-removed">-{stats.removed}</span>
+									<span class="tool-perm-diff-added">+{stats.added}</span>
+								</span>
+							)}
+						</span>
+					)}
+					{target.kind === 'command' && cmdHtml && (
+						<div class="tool-perm-cmd" dangerouslySetInnerHTML={{ __html: cmdHtml }} />
+					)}
+					{target.kind === 'url' && <span class="tool-perm-text">{target.url}</span>}
+					{target.kind === 'query' && <span class="tool-perm-text">{target.query}</span>}
+				</div>
+			)}
 			{showDebug && <ToolDebugInfo tc={tc} />}
 		</div>
 	);
