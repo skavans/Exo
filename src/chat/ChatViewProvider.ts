@@ -1936,7 +1936,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			vscode.window.showWarningMessage('Exo: could not determine the repository main branch — merge cancelled.');
 			return;
 		}
-		void this._messageHandler.handleUserMessage(buildCommitAndMergePrompt(main), undefined, { mergeIntent: true });
+		const custom = this.configWatcher.config.mergePrompt;
+		const prompt = custom
+			? custom.replaceAll('{main}', main)
+			: buildCommitAndMergePrompt(main);
+		void this._messageHandler.handleUserMessage(prompt, undefined, { mergeIntent: true });
 	}
 
 	/**

@@ -22,6 +22,12 @@ export interface AgentConfig {
 /** Root Exo configuration: list of ACP agents. */
 export interface ExoConfig {
 	agents?: AgentConfig[];
+	/**
+	 * Custom prompt for the "commit & merge to main" button. `{main}` is
+	 * replaced with the repository's main branch name. Falls back to the
+	 * built-in prompt when unset.
+	 */
+	mergePrompt?: string;
 	[key: string]: unknown;
 }
 
@@ -37,6 +43,10 @@ const DEFAULT_CONFIG_COMMENT = `# Exo configuration
 #     type: stdio
 #     command: npx
 #     args: ["-y", "@anthropic/claude-code-acp"]
+#
+# Custom prompt for the "commit & merge to main" button.
+# {main} is replaced with the repository's main branch name.
+# mergePrompt: "Commit everything, then merge {main} into your branch."
 `;
 
 /** Config directory. Honors `$XDG_CONFIG_HOME`, defaults to `~/.config/exo`. */
