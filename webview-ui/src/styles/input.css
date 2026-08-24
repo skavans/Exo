@@ -331,7 +331,7 @@
 	color: var(--ct-text-primary);
 }
 
-/* Commit & merge to main — pill left of the send button */
+/* Commit & merge to main — selector-style button left of the send button */
 #merge-pill {
 	position: absolute;
 	bottom: 8px;
@@ -341,20 +341,20 @@
 	gap: var(--ct-space-2xs);
 	height: 24px;
 	box-sizing: border-box;
-	padding: 0 var(--ct-space-xs);
-	border: 1px solid color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 45%, transparent);
-	border-radius: 999px;
-	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 10%, transparent);
+	padding: var(--ct-space-2xs) var(--ct-space-sm);
+	border: 1px solid color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 35%, transparent);
+	border-radius: var(--ct-radius-sm);
+	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 6%, var(--ct-bg-input));
 	color: var(--ct-mode, var(--ct-accent));
 	font-size: var(--ct-text-xs);
-	font-weight: 600;
-	line-height: 1;
+	font-weight: 500;
+	line-height: var(--ct-lh-tight);
 	cursor: pointer;
 	transition: background var(--ct-transition-fast), color var(--ct-transition-fast), border-color var(--ct-transition-fast);
 }
 
 #merge-pill:hover {
-	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 18%, transparent);
+	background: color-mix(in srgb, var(--ct-mode, var(--ct-accent)) 10%, var(--ct-bg-input));
 	border-color: var(--ct-mode, var(--ct-accent));
 	color: var(--ct-text-primary);
 }
