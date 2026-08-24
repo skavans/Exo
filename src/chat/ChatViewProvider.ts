@@ -1972,6 +1972,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		return {
 			getWorkspaceRoot: () => runtime.cwd,
 			files: runtime.files,
+			// The git extension's file watcher is debounced (~1s), so nudge the
+			// worktree repo after each agent write to keep the SCM view fresh.
+			onFileWritten: () => refreshScmStatus(runtime.cwd),
 		};
 	}
 

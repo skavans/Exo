@@ -145,6 +145,7 @@ export class WorkspaceFolderSwitcher {
 		if (cwd !== root && !isPathInside(cwd, root)) {
 			return;
 		}
+		this.applySearchScope(root, cwd);
 		if (this.isCurrent(root, cwd)) {
 			return;
 		}
@@ -155,6 +156,26 @@ export class WorkspaceFolderSwitcher {
 			name: branch ? `${path.basename(cwd)} (${branch})` : undefined,
 		};
 		this._drain();
+	}
+
+	/**
+	 * Restrict workspace search (Cmd+P quick-open + Ctrl+Shift+F) to the active
+	 * session's worktree. The worktree lives INSIDE the root, so the root folder
+	 * would otherwise match every session file and the main worktree too. A
+	 * workspace-level `search.exclude` can't help: its globs apply to EVERY
+	 * folder, and `**` would hide the worktree folder itself. So we write a
+	 * FOLDER setting on the root folder only (`**` hides all of root; the
+	 * worktree folder is untouched and searches fully). Idle (`showRoot`)
+	 * clears it. The `.vscode/settings.json` this creates lives in the root
+	 * repo, hidden from git via `info/exclude`.
+	 */
+	private applySearchScope(root: string, cwd: string): void {
+		const config = vscode.workspace.getConfiguration('search', vscode.Uri.file(root));
+		if (cwd === root) {
+			void config.update('exclude', undefined, vscode.ConfigurationTarget.WorkspaceFolder);
+			return;
+		}
+		void config.update('exclude', { '**': true }, vscode.ConfigurationTarget.WorkspaceFolder);
 	}
 
 	/** The Explorer should show only the pinned root (no active session). */

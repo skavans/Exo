@@ -32,6 +32,8 @@ export interface FsHandlerContext {
 	getWorkspaceRoot(): string;
 	/** Single file cache (used for both reading and refresh-after-write) */
 	files: Files;
+	/** Optional hook fired after a successful write (e.g. SCM refresh). */
+	onFileWritten?: () => void;
 }
 
 // --- Utilities ---
@@ -155,6 +157,9 @@ export async function handleWriteTextFile(
 	} catch {
 		// ignore — diagnostics are optional
 	}
+
+	// Let the host know a file changed (e.g. to refresh the SCM view).
+	ctx.onFileWritten?.();
 
 	return undefined;
 }

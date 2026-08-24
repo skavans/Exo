@@ -73,9 +73,10 @@ async function gitCommonDir(root: string): Promise<string | null> {
 }
 
 /**
- * Hide `.exo/` from git: append `/.exo/` to the repo's `info/exclude` so the
- * managed workspace file and worktree copies never show up in `git status` and
- * are never committed. Best-effort — any failure only means the dir is visible.
+ * Hide Exo-managed paths from git: append `/.exo/` and `/.vscode/` to the
+ * repo's `info/exclude` so the managed workspace file, worktree copies and the
+ * folder-scoped search settings never show up in `git status` and are never
+ * committed. Best-effort — any failure only means the dir is visible.
  */
 export async function ensureGitExclude(root: string): Promise<void> {
 	try {
@@ -90,11 +91,13 @@ export async function ensureGitExclude(root: string): Promise<void> {
 		} catch {
 			// info/exclude may not exist yet
 		}
-		if (content.split(/\r?\n/).some((line) => line.trim() === '/.exo/')) {
+		const lines = content.split(/\r?\n/).map((line) => line.trim());
+		const missing = ['/.exo/', '/.vscode/'].filter((entry) => !lines.includes(entry));
+		if (missing.length === 0) {
 			return;
 		}
 		const line = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
-		await fs.promises.writeFile(excludePath, content + line + '/.exo/\n', 'utf8');
+		await fs.promises.writeFile(excludePath, content + line + missing.join('\n') + '\n', 'utf8');
 	} catch (err) {
 		console.error('[Exo worktree] git exclude failed:', err);
 	}
@@ -432,8 +435,26 @@ interface GitApiV1 {
  * Force the git extension to refresh a repository's status in the SCM view.
  * The built-in extension debounces its file watcher (~1s), so after a session
  * becomes active we nudge the worktree repo so its changes appear immediately.
+ * Coalesces bursts of writes (agents write many files in a row) onto a single
+ * trailing refresh.
  */
+const scmRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export async function refreshScmStatus(worktreePath: string): Promise<void> {
+	const existing = scmRefreshTimers.get(worktreePath);
+	if (existing) {
+		clearTimeout(existing);
+	}
+	scmRefreshTimers.set(
+		worktreePath,
+		setTimeout(() => {
+			scmRefreshTimers.delete(worktreePath);
+			void refreshScmStatusNow(worktreePath);
+		}, 300),
+	);
+}
+
+async function refreshScmStatusNow(worktreePath: string): Promise<void> {
 	try {
 		const gitExt = vscode.extensions.getExtension('vscode.git');
 		if (!gitExt) {
