@@ -792,7 +792,8 @@ function CompactToolLine({ tc }: { tc: ToolCallInfo }) {
    ============================================================ */
 
 function PermissionCard({ tc }: { tc: ToolCallInfo }) {
-	const active = !!tc.permissionRequestId && !!tc.permissionOptions && tc.permissionOptions.length > 0;
+	const [resolved, setResolved] = useState(false);
+	const active = !resolved && !!tc.permissionRequestId && !!tc.permissionOptions && tc.permissionOptions.length > 0;
 	const options = tc.permissionOptions ?? [];
 	const [showDebug, setShowDebug] = useState(false);
 	const target = useMemo(() => extractToolTarget(tc), [tc]);
@@ -801,6 +802,7 @@ function PermissionCard({ tc }: { tc: ToolCallInfo }) {
 
 	const handleSelect = useCallback((optionId: string) => {
 		if (!tc.permissionRequestId) return;
+		setResolved(true);
 		vscode.postMessage({
 			type: 'permissionDecision',
 			requestId: tc.permissionRequestId,
