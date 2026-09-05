@@ -134,19 +134,44 @@ async function worktreeBranchExists(root: string, number: number): Promise<boole
 }
 
 /**
- * A filesystem-safe slug of the project folder name (basename of `root`). Used
- * as the worktree's leaf folder name so tools that derive an identity from the
- * cwd basename (e.g. `docker compose` project name) see the same value as they
- * would in the main project. Falls back to `workspace` when the root has no
- * usable basename.
+ * The worktree's leaf folder name: the project folder name (basename of `root`)
+ * VERBATIM. `docker compose` derives its project name from the cwd basename via
+ * rules we must not imitate (it keeps `_`, strips `.`…), so the only way to get
+ * an identical project name in every session is an identical input. On Linux
+ * the basename needs no other sanitization (`/` cannot occur in it); a missing
+ * basename falls back to `workspace`.
  */
-export function sanitizeProjectName(root: string): string {
-	const base = path.basename(root) || 'workspace';
-	const slug = base
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-+|-+$/g, '');
-	return slug || 'workspace';
+export function projectLeafName(root: string): string {
+	return path.basename(root) || 'workspace';
+}
+
+/**
+ * Root-level compose glue files that are conventionally gitignored. A fresh
+ * worktree lacks them, so `docker compose` there would lose env/ports config
+ * (or derive a different project identity). We symlink them from the root
+ * rather than copy: one source, secrets never duplicated, and the shared
+ * compose stack means both checkouts describe the same services anyway.
+ */
+const COMPOSE_GLUE_FILES = ['.env', 'docker-compose.override.yml'];
+
+async function linkComposeGlue(root: string, worktree: string): Promise<void> {
+	for (const file of COMPOSE_GLUE_FILES) {
+		const source = path.join(root, file);
+		const dest = path.join(worktree, file);
+		try {
+			// Tracked in the worktree checkout or created by the agent — leave it.
+			await fs.promises.lstat(dest);
+			continue;
+		} catch {
+			// absent — link it below
+		}
+		try {
+			await fs.promises.stat(source);
+			await fs.promises.symlink(path.relative(path.dirname(dest), source), dest);
+		} catch {
+			// no such file at the root (or symlink unsupported) — nothing to glue
+		}
+	}
 }
 
 /**
@@ -163,8 +188,9 @@ export function worktreeBranchFromPath(p: string): string | null {
 /**
  * Create a worktree for a new session. Worktrees live inside the repo under
  * `.exo/worktrees/exo-<N>/<project>` — the git worktree root is the project
- * leaf folder (so its basename matches the main project, keeping `docker
- * compose` project names stable), while the session's ordinal number `N` lives
+ * leaf folder named after the main project VERBATIM (so `docker compose`
+ * derives the exact same project name from either checkout, and `up` from a
+ * session targets the same stack), while the session's ordinal number `N` lives
  * in the parent dir (so the folder stays unique per session and the branch
  * `exo-<N>` is local-only, never pushed). `N` is the first free number on disk
  * — so the parent dir/branch name always matches the session's ordinal number
@@ -184,11 +210,12 @@ export async function createWorktree(root: string): Promise<WorktreeInfo | null>
 		number++;
 	}
 	const name = `exo-${number}`;
-	const target = path.join(root, '.exo', 'worktrees', name, sanitizeProjectName(root));
+	const target = path.join(root, '.exo', 'worktrees', name, projectLeafName(root));
 	try {
 		await ensureGitExclude(root);
 		await fs.promises.mkdir(path.dirname(target), { recursive: true });
 		await runGit(['worktree', 'add', '-b', name, target], root);
+		await linkComposeGlue(root, target);
 	} catch (err) {
 		console.error('[Exo worktree] create failed:', err);
 		return null;
