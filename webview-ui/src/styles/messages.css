@@ -84,11 +84,34 @@
    ============================================================ */
 
 .message {
+	position: relative;
 	padding: var(--ct-space-md) var(--ct-space-lg);
 	line-height: var(--ct-lh-normal);
 	word-wrap: break-word;
 	white-space: pre-wrap;
 	transition: background var(--ct-transition-fast), border-color var(--ct-transition-fast);
+}
+
+/* Whole-message copy button — same icon pattern as the per-code-block one
+   (.copy-btn in markdown.css). Hidden until the message is hovered; visible
+   while copied (handled by .copy-btn.copied) or keyboard-focused. */
+.message-copy-btn {
+	position: absolute;
+	top: var(--ct-space-xs);
+	right: var(--ct-space-sm);
+	opacity: 0;
+}
+
+.message:hover > .message-copy-btn,
+.message-copy-btn:focus-visible {
+	opacity: 1;
+}
+
+/* User bubble is right-aligned and narrow — hang the button outside it,
+   to the left, so it never overlaps or reflows the bubble content. */
+.message.user > .message-copy-btn {
+	top: var(--ct-space-sm);
+	right: calc(100% + var(--ct-space-xs));
 }
 
 /* Message block container: text and activity blocks stack in a column with a gap.

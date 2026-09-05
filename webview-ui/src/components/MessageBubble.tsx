@@ -41,6 +41,16 @@ function fallbackCopy(text: string): void {
 	document.body.removeChild(ta);
 }
 
+async function copyToClipboard(text: string): Promise<void> {
+	if (navigator.clipboard?.writeText) {
+		try {
+			await navigator.clipboard.writeText(text);
+			return;
+		} catch { /* fall through to execCommand */ }
+	}
+	fallbackCopy(text);
+}
+
 /* ============================================================
    File-path links
    ------------------------------------------------------------
@@ -280,6 +290,45 @@ function renderUserText(content: string): VNode[] {
 		nodes.push(<span key={key++}>{content.slice(last)}</span>);
 	}
 	return nodes.length > 0 ? nodes : [<span key={0}>{content}</span>];
+}
+
+/* ============================================================
+   CopyButton — icon-only copy control (fa-copy → fa-check)
+   ------------------------------------------------------------
+   Same visual/behavioral pattern as the per-code-block copy
+   button rendered inside markdown HTML; reused for whole
+   messages. The markdown-HTML button is handled separately via
+   click delegation (it is not a Preact node).
+   ============================================================ */
+
+const COPY_FEEDBACK_MS = 1500;
+
+function CopyButton({ text, extraClass, label }: { text: string; extraClass?: string; label: string }) {
+	const [copied, setCopied] = useState(false);
+	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => () => {
+		if (timerRef.current) clearTimeout(timerRef.current);
+	}, []);
+
+	const handleClick = useCallback(() => {
+		void copyToClipboard(text);
+		setCopied(true);
+		if (timerRef.current) clearTimeout(timerRef.current);
+		timerRef.current = setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
+	}, [text]);
+
+	return (
+		<button
+			class={`copy-btn${extraClass ? ` ${extraClass}` : ''}${copied ? ' copied' : ''}`}
+			type="button"
+			aria-label={label}
+			title={label}
+			onClick={handleClick}
+		>
+			<i class={`fas ${copied ? 'fa-check' : 'fa-copy'}`} aria-hidden="true" />
+		</button>
+	);
 }
 
 /* ============================================================
@@ -917,17 +966,9 @@ export const MessageBubble = memo(function MessageBubble({ message, themeVersion
 					setTimeout(() => {
 						copyBtn.classList.remove('copied');
 						if (icon) { icon.className = 'fas fa-copy'; }
-					}, 1500);
+					}, COPY_FEEDBACK_MS);
 				};
-				if (navigator.clipboard?.writeText) {
-					navigator.clipboard.writeText(text).then(done).catch(() => {
-						fallbackCopy(text);
-						done();
-					});
-				} else {
-					fallbackCopy(text);
-					done();
-				}
+				void copyToClipboard(text).then(done);
 			}
 			return;
 		}
@@ -951,6 +992,19 @@ export const MessageBubble = memo(function MessageBubble({ message, themeVersion
 	}, []);
 
 	const classes = `message ${message.role}${message.isError ? ' error' : ''}${message.isQueued ? ' queued' : ''}`;
+
+	// Copy payload: raw markdown exactly as authored (assistant = model output,
+	// user = what was sent). Activity/reasoning never copied. Mention tokens
+	// `@[path]` collapse to their full path — what the chip abbreviates.
+	const copyText = useMemo(() => {
+		const joined = (message.blocks ?? [])
+			.filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
+			.map((block) => block.content)
+			.filter((content) => content.trim() && content !== EMPTY_RESPONSE)
+			.join('\n\n');
+		return joined.replace(MENTION_TOKEN, '$1');
+	}, [message.blocks]);
+	const canCopy = !isStreaming && !message.isQueued && !message.isError && copyText.trim().length > 0;
 
 	// Initial gap: the streaming assistant has no blocks yet → render an empty
 	// activity block so the shimmer/timer start right on send.
@@ -979,6 +1033,7 @@ export const MessageBubble = memo(function MessageBubble({ message, themeVersion
 					return null;
 				})}
 			</div>
+			{canCopy && <CopyButton text={copyText} extraClass="message-copy-btn" label="Copy message" />}
 			{message.isQueued && (
 				<div class="queued-badge" title="Will be sent automatically">
 					<svg class="queued-spinner" width="12" height="12" viewBox="0 0 12 12" fill="none">
