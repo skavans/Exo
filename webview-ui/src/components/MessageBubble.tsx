@@ -1005,6 +1005,19 @@ export const MessageBubble = memo(function MessageBubble({ message, themeVersion
 		return joined.replace(MENTION_TOKEN, '$1');
 	}, [message.blocks]);
 	const canCopy = !isStreaming && !message.isQueued && !message.isError && copyText.trim().length > 0;
+	// The chip anchors to the LAST text block, not to the message box — activity
+	// blocks (tool/reasoning strips) often trail the answer text, and anchoring
+	// to the box would drop the chip onto that strip instead of the message.
+	const lastTextIdx = (() => {
+		for (let i = (message.blocks?.length ?? 0) - 1; i >= 0; i--) {
+			const block = message.blocks![i];
+			if (block.type === 'text' && block.content.trim() && block.content !== EMPTY_RESPONSE) {
+				return i;
+			}
+		}
+		return -1;
+	})();
+	const copyBtnNode = canCopy ? <CopyButton text={copyText} extraClass="message-copy-btn" label="Copy message" /> : null;
 
 	// Initial gap: the streaming assistant has no blocks yet → render an empty
 	// activity block so the shimmer/timer start right on send.
@@ -1021,11 +1034,20 @@ export const MessageBubble = memo(function MessageBubble({ message, themeVersion
 						if (message.isError) {
 							return <div key={i} class="error-text">{block.content}</div>;
 						}
+						const isCopyAnchor = i === lastTextIdx && copyBtnNode !== null;
 						if (message.role === 'user') {
-							return <div key={i} class="user-text">{renderUserText(block.content)}</div>;
+							return (
+								<div key={i} class={isCopyAnchor ? 'user-text text-anchor' : 'user-text'}>
+									{renderUserText(block.content)}
+									{isCopyAnchor && copyBtnNode}
+								</div>
+							);
 						}
 						const isLastAndStreaming = isStreaming && i === lastIndex;
-						return renderMarkdown(block.content, handleContentClick, isLastAndStreaming);
+						const md = renderMarkdown(block.content, handleContentClick, isLastAndStreaming);
+						return isCopyAnchor
+							? <div key={i} class="text-anchor">{md}{copyBtnNode}</div>
+							: md;
 					}
 					if (block.type === 'activity') {
 						return <ActivityBar key={i} activity={block} isStreaming={isStreaming} isLast={i === lastIndex} />;
@@ -1033,7 +1055,6 @@ export const MessageBubble = memo(function MessageBubble({ message, themeVersion
 					return null;
 				})}
 			</div>
-			{canCopy && <CopyButton text={copyText} extraClass="message-copy-btn" label="Copy message" />}
 			{message.isQueued && (
 				<div class="queued-badge" title="Will be sent automatically">
 					<svg class="queued-spinner" width="12" height="12" viewBox="0 0 12 12" fill="none">

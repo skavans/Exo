@@ -92,26 +92,40 @@
 	transition: background var(--ct-transition-fast), border-color var(--ct-transition-fast);
 }
 
-/* Whole-message copy button — same icon pattern as the per-code-block one
-   (.copy-btn in markdown.css). Hidden until the message is hovered; visible
-   while copied (handled by .copy-btn.copied) or keyboard-focused. */
-.message-copy-btn {
-	position: absolute;
-	top: var(--ct-space-xs);
-	right: var(--ct-space-sm);
-	opacity: 0;
+/* Whole-message copy button — unified for user and assistant. Anchored to the
+   LAST TEXT block (.text-anchor), NOT to the message box: activity strips
+   (tools/reasoning) often trail the answer, and a box-level anchor would drop
+   the chip onto that strip instead of the message. Elevated chip (opaque bg +
+   border + shadow) so it stays readable over a ragged last line. Same icon
+   pattern as the per-code-block .copy-btn (markdown.css); hidden until the
+   message is hovered; visible while copied (.copy-btn.copied) or focused. */
+/* `.text-anchor >` prefixes outrank the generic `.copy-btn` rules in
+   markdown.css (imported later) so the chip's opaque background survives. */
+.text-anchor {
+	position: relative;
 }
 
-.message:hover > .message-copy-btn,
-.message-copy-btn:focus-visible {
+.text-anchor > .message-copy-btn {
+	position: absolute;
+	bottom: 0;
+	right: 0;
+	opacity: 0;
+	background: var(--ct-surface-elevated);
+	border: 1px solid var(--ct-border-default);
+	border-radius: var(--ct-radius-sm);
+	box-shadow: var(--ct-shadow-sm);
+}
+
+.message:hover .text-anchor > .message-copy-btn,
+.text-anchor > .message-copy-btn:focus-visible {
 	opacity: 1;
 }
 
-/* User bubble is right-aligned and narrow — hang the button outside it,
-   to the left, so it never overlaps or reflows the bubble content. */
-.message.user > .message-copy-btn {
-	top: var(--ct-space-sm);
-	right: calc(100% + var(--ct-space-xs));
+/* Keep the chip opaque on hover — .copy-btn:hover (markdown.css) would
+   otherwise flatten it to a transparent list-hover background. */
+.text-anchor > .message-copy-btn:hover {
+	background: var(--ct-surface-elevated);
+	color: var(--ct-text-primary);
 }
 
 /* Message block container: text and activity blocks stack in a column with a gap.
