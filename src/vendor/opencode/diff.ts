@@ -101,15 +101,17 @@ function applyWithRetry(content: string, diff: string): string | null {
 
 /**
  * Rebuild the diff with exact leading whitespace recovered from the file —
- * the inverse of opencode's `trimDiff`. For each context/removed line the
- * file's line at the hunk offset yields the original indent. Added lines keep
- * their own relative indentation from the (trimmed) patch and get re-padded
- * with exactly what the trim removed (`trimDiff` slices the same character
- * count off every content line, so the delta measured on any anchor line is
- * the global trim amount). This preserves multi-level added blocks and is
- * exact for tabs too (the trim's character arithmetic matches ours). Blank
- * content lines keep their trimmed form — `trimDiff` strips them fully, so
- * re-padding would break exact context matching on hunks with blank lines.
+ * the inverse of opencode's `trimDiff`. Context/removed lines are emitted as
+ * the file's line at the hunk offset VERBATIM — `applyPatch` compares them
+ * byte-for-byte against the file, so the file line is exactly what matching
+ * requires (real files carry trailing whitespace on otherwise-blank lines,
+ * so reconstructing indent+body and blanking whitespace-only lines breaks
+ * matching on them). Added lines keep their own relative indentation from
+ * the (trimmed) patch and get re-padded with exactly what the trim removed
+ * (`trimDiff` cuts the same character count off every content line, capped
+ * at each line's own indent, so the max delta across anchor lines is the
+ * global trim amount). This preserves multi-level added blocks and is exact
+ * for tabs too (the trim's character arithmetic matches ours).
  */
 function reindentFromFile(content: string, diff: string): string | null {
 	let parsed;
@@ -138,18 +140,15 @@ function reindentFromFile(content: string, diff: string): string | null {
 			for (const line of hunk.lines) {
 				const marker = line[0];
 				if (marker === ' ' || marker === '-') {
-					const body = line.slice(1).replace(/^\s*/, '');
 					const fileLine = fileLines[fileIdx];
 					if (fileLine !== undefined) {
-						const ws = leadingWs(fileLine);
-						if (body.length > 0) {
+						if (fileLine.trim().length > 0) {
+							const ws = leadingWs(fileLine);
 							if (ws.length > 0) {
 								padChar = ws.charAt(ws.length - 1);
 							}
-							out.push(marker + ws + body);
-						} else {
-							out.push(marker);
 						}
+						out.push(marker + fileLine);
 					} else {
 						out.push(line);
 					}
@@ -169,12 +168,16 @@ function reindentFromFile(content: string, diff: string): string | null {
 
 /**
  * The per-line number of whitespace characters `trimDiff` removed: measured on
- * the first usable anchor (context/removed) line as the difference between the
- * file line's leading whitespace and the patch line's leading whitespace as-is.
+ * usable anchor (context/removed) lines as the difference between the file
+ * line's leading whitespace and the patch line's leading whitespace as-is.
+ * `trimDiff` caps the cut at each line's own indent, so every anchor measures
+ * `min(trim, ownIndent)` and the MAX across anchors is the true trim (a shallow
+ * first anchor would otherwise underestimate it and under-pad added lines).
  * null when no anchor is usable (added lines keep their trimmed indentation).
  */
 function hunkTrimmedIndent(hunk: { oldStart: number; lines: string[] }, fileLines: string[]): number | null {
 	let fileIdx = hunk.oldStart - 1;
+	let best: number | null = null;
 	for (const line of hunk.lines) {
 		const marker = line[0];
 		if (marker !== ' ' && marker !== '-') {
@@ -191,10 +194,10 @@ function hunkTrimmedIndent(hunk: { oldStart: number; lines: string[] }, fileLine
 		}
 		const removed = leadingWs(fileLine).length - leadingWs(own).length;
 		if (removed >= 0) {
-			return removed;
+			best = best === null ? removed : Math.max(best, removed);
 		}
 	}
-	return null;
+	return best;
 }
 
 function leadingWs(line: string): string {
