@@ -184,15 +184,71 @@
 }
 
 /* --- Error --- */
+/* Fatal turn error: a calm, self-contained card. The old full-red treatment
+   painted the entire streamed answer red, which is loud for a rare event. */
 .message.error {
-	color: var(--ct-status-danger);
-	border-left: 2px solid var(--ct-status-danger);
-	padding-left: calc(var(--ct-space-lg) - var(--ct-space-sm) - 2px);
-	margin-left: var(--ct-space-sm);
-	margin-right: var(--ct-space-sm);
-	white-space: pre-wrap;
+	background: transparent;
+	padding: var(--ct-space-xs) var(--ct-space-lg);
+}
+
+.error-card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--ct-space-sm);
+	padding: var(--ct-space-md) var(--ct-space-lg);
+	border: 1px solid var(--ct-status-danger-border);
+	border-left: 3px solid var(--ct-status-danger);
 	background: var(--ct-status-danger-bg);
-	border-radius: 0 var(--ct-radius-sm) var(--ct-radius-sm) 0;
+	border-radius: var(--ct-radius-md);
+}
+
+.error-card-head {
+	display: flex;
+	align-items: center;
+	gap: var(--ct-space-sm);
+}
+
+.error-card-icon {
+	color: var(--ct-status-danger);
+	font-size: var(--ct-text-base);
+}
+
+.error-card-label {
+	font-size: var(--ct-text-sm);
+	font-weight: 600;
+	color: var(--ct-text-primary);
+}
+
+.error-card-retry {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--ct-space-xs);
+	margin-left: auto;
+	padding: var(--ct-space-xs) var(--ct-space-md);
+	border-radius: var(--ct-radius-sm);
+	border: 1px solid var(--ct-status-danger-border);
+	background: var(--ct-bg-input);
+	color: var(--ct-text-primary);
+	font-size: var(--ct-text-sm);
+	cursor: pointer;
+	transition: background var(--ct-transition-fast), border-color var(--ct-transition-fast);
+}
+
+.error-card-retry:hover {
+	background: var(--ct-bg-hover);
+	border-color: var(--ct-status-danger);
+}
+
+.error-card-text {
+	margin: 0;
+	font-family: var(--ct-font-mono, monospace);
+	font-size: var(--ct-text-sm);
+	line-height: var(--ct-lh-normal);
+	color: var(--ct-text-secondary);
+	white-space: pre-wrap;
+	word-break: break-word;
+	max-height: 12em;
+	overflow: auto;
 }
 
 /* ============================================================

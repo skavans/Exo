@@ -216,6 +216,10 @@ window.addEventListener(FILE_LINK_REQUEST_EVENT, ((event: Event) => {
 interface Props {
 	message: ChatMessage;
 	themeVersion: number;
+	/** Show a Retry button on this (fatal) error message — only the latest one. */
+	showRetry?: boolean;
+	/** Send the fixed continue/try-again prompt back to the agent. */
+	onRetry?: () => void;
 }
 
 /** Render markdown with file links support */
@@ -923,7 +927,7 @@ function PermissionCard({ tc }: { tc: ToolCallInfo }) {
    MessageBubble
    ============================================================ */
 
-export const MessageBubble = memo(function MessageBubble({ message, themeVersion }: Props) {
+export const MessageBubble = memo(function MessageBubble({ message, themeVersion, showRetry, onRetry }: Props) {
 	const isStreaming = message.isStreaming ?? false;
 	const [, setFileLinkVersion] = useState(0);
 	const resolveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1026,14 +1030,38 @@ export const MessageBubble = memo(function MessageBubble({ message, themeVersion
 		: (isStreaming && message.role === 'assistant' ? [EMPTY_ACTIVITY] : []);
 	const lastIndex = renderBlocks.length - 1;
 
+	// Fatal turn error: a compact, calm card — never paint the whole stream red.
+	// The Retry button (latest error only) sends a fixed continue prompt.
+	if (message.isError) {
+		const errText = (message.blocks ?? [])
+			.filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
+			.map((block) => block.content)
+			.join('\n\n')
+			.trim();
+		return (
+			<div class="message error">
+				<div class="error-card">
+					<div class="error-card-head">
+						<i class="fa-solid fa-circle-exclamation error-card-icon" aria-hidden="true"></i>
+						<span class="error-card-label">Something went wrong</span>
+						{showRetry && onRetry && (
+							<button class="error-card-retry" onClick={onRetry} title="Continue — retry the last turn">
+								<i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+								<span>Retry</span>
+							</button>
+						)}
+					</div>
+					{errText && <pre class="error-card-text">{errText}</pre>}
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div class={classes}>
 			<div class="message-blocks">
 				{renderBlocks.map((block, i) => {
 					if (block.type === 'text') {
-						if (message.isError) {
-							return <div key={i} class="error-text">{block.content}</div>;
-						}
 						const isCopyAnchor = i === lastTextIdx && copyBtnNode !== null;
 						if (message.role === 'user') {
 							return (

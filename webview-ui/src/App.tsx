@@ -88,6 +88,11 @@ export function App() {
 		vscode.postMessage({ type: 'sendMessage', text, images });
 	}, []);
 
+	// Fixed continue/try-again prompt a fatal error's Retry button sends to the agent.
+	const handleRetry = useCallback(() => {
+		vscode.postMessage({ type: 'sendMessage', text: 'Continue — the previous attempt failed. Retry from where you left off.' });
+	}, []);
+
 	const handleSelectConfigOption = useCallback((configId: string, value: string) => {
 		vscode.postMessage({ type: 'selectConfigOption', configId, value });
 	}, []);
@@ -329,6 +334,9 @@ export function App() {
 	const chatViewStyle = activeModeColor ? { '--ct-mode': activeModeColor } as preact.JSX.CSSProperties : undefined;
 	const agentLabel = formatAgentLabel(agentInfo);
 
+	// Retry only on the latest fatal error, and never while a turn is running.
+	const canRetry = messages.length > 0 && !!messages[messages.length - 1].isError && !isAgentRunning;
+
 	const pendingReject = useMemo(() => {
 		for (let i = messages.length - 1; i >= 0; i--) {
 			const msg = messages[i];
@@ -385,7 +393,13 @@ export function App() {
 				<ChatLoading title={chatLoading.title} mode={chatLoading.mode} />
 			) : activeSessionId ? (
 				<>
-					<MessageList key={activeSessionId} messages={messages} themeVersion={themeVersion} />
+					<MessageList
+						key={activeSessionId}
+						messages={messages}
+						themeVersion={themeVersion}
+						canRetry={canRetry}
+						onRetry={handleRetry}
+					/>
 					{plan && <TodoList plan={plan} />}
 					<MessageInput
 						onSend={handleSend}

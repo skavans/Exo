@@ -1387,6 +1387,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 				runtime.callbacks.sendPlan();
 			},
 			onUsageUpdate: (update) => {
+				// Freeze right after a stop: the post-cancel usage re-broadcast is
+				// bogus and would reset the pill. Cleared at the next real turn.
+				if (runtime.usageFrozen) {
+					return;
+				}
+				// A zero/empty `used` outside a session reset carries no context
+				// info — keep the last real reading rather than showing an empty pill.
+				if ((!update.used || update.used <= 0) && runtime.currentUsage) {
+					return;
+				}
 				runtime.currentUsage = { used: update.used, size: update.size };
 				runtime.callbacks.sendTokenUsage();
 			},
@@ -1528,6 +1538,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 		runtime.toolCallInfos.clear();
 		runtime.currentPlan = null;
 		runtime.currentUsage = null;
+		runtime.usageFrozen = false;
 		if (runtime.replayUpdateTimer) {
 			clearTimeout(runtime.replayUpdateTimer);
 			runtime.replayUpdateTimer = null;
@@ -1903,6 +1914,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 			return;
 		}
 		runtime.stopped = true;
+		runtime.usageFrozen = true;
 		runtime.acpClient.cancel();
 		runtime.isStreaming = false;
 		cancelAllPermissions(this.permissionContext(runtime));

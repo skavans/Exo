@@ -298,6 +298,7 @@ export class WebviewMessageHandler {
 		runtime.isStreaming = true;
 		runtime.agentRunning = true;
 		runtime.stopped = false;
+		runtime.usageFrozen = false;
 		this.provider.sendTabs();
 		if (this.provider.activeSessionId === runtime.id) {
 			this.provider.view?.webview.postMessage({ type: 'updateAgentRunning', running: true });
@@ -314,13 +315,20 @@ export class WebviewMessageHandler {
 			}
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
-			assistantMsg.isError = true;
 			const errText = `ACP error: ${msg}`;
-			const lastBlock = assistantMsg.blocks[assistantMsg.blocks.length - 1];
-			if (lastBlock && lastBlock.type === 'text') {
-				lastBlock.content += (lastBlock.content ? '\n\n' : '') + errText;
-			} else {
+			// A fatal turn failure must not paint the whole streamed answer red.
+			// If nothing streamed yet, this message simply becomes the error;
+			// otherwise keep the partial answer rendered normally and surface the
+			// failure as its own compact, retryable card.
+			if (assistantMsg.blocks.length === 0) {
+				assistantMsg.isError = true;
 				assistantMsg.blocks.push({ type: 'text', content: errText });
+			} else {
+				runtime.messages.push({
+					role: 'assistant',
+					blocks: [{ type: 'text', content: errText }],
+					isError: true,
+				});
 			}
 		} finally {
 			const wasStopped = runtime.stopped;

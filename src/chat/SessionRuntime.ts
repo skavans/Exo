@@ -88,6 +88,14 @@ export class SessionRuntime {
 	// --- Plan / usage / config ---
 	currentPlan: Plan | null = null;
 	currentUsage: { used: number; size: number } | null = null;
+	/**
+	 * When true, incoming `usage_update`s are dropped. Set on stop so the pill
+	 * freezes at its pre-stop value — the agent re-broadcasts a collapsed/zero
+	 * usage for the aborted turn after `session/cancel` resolves, which would
+	 * otherwise visibly reset the context indicator. Cleared at the start of the
+	 * next real turn (and on session reset), never mid-turn.
+	 */
+	usageFrozen = false;
 	availableCommands: AvailableCommand[] = [];
 	mode = '';
 

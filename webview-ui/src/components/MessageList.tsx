@@ -6,12 +6,15 @@ import { ErrorBoundary } from './ErrorBoundary';
 interface Props {
 	messages: ChatMessage[];
 	themeVersion: number;
+	/** Enable the Retry button on the latest fatal error message. */
+	canRetry?: boolean;
+	onRetry?: () => void;
 }
 
 const STICKY_THRESHOLD = 48;
 const ECHO_WINDOW_MS = 120;
 
-export function MessageList({ messages, themeVersion }: Props) {
+export function MessageList({ messages, themeVersion, canRetry, onRetry }: Props) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [showScrollBtn, setShowScrollBtn] = useState(false);
 
@@ -110,7 +113,13 @@ export function MessageList({ messages, themeVersion }: Props) {
 						</div>
 					) : (
 						messages.map((msg, i) => (
-							<MessageBubble key={i} message={msg} themeVersion={themeVersion} />
+							<MessageBubble
+								key={i}
+								message={msg}
+								themeVersion={themeVersion}
+								showRetry={canRetry && i === messages.length - 1 && !!msg.isError}
+								onRetry={onRetry}
+							/>
 						))
 					)}
 				</div>
