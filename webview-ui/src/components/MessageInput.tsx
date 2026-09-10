@@ -802,36 +802,91 @@ function parseModelValue(value: string): { provider: string | null; name: string
 }
 
 function ConfigDropdown({ selector, modeColorIndex, onSelect, disabled, accent, variant }: DropdownProps) {
+	const searchable = variant === 'model';
 	const [open, setOpen] = useState(false);
+	const [filter, setFilter] = useState('');
+	const [selectedIndex, setSelectedIndex] = useState(0);
 	const ref = useRef<HTMLDivElement>(null);
+	const searchRef = useRef<HTMLInputElement>(null);
 
 	const current = selector.options.find((o) => o.value === selector.currentValue);
 	const rawLabel = current?.name ?? selector.currentValue;
 	const { provider, name: modelName } = variant === 'model' ? parseModelValue(rawLabel) : { provider: null, name: rawLabel };
 
+	const close = () => {
+		setOpen(false);
+		setFilter('');
+		setSelectedIndex(0);
+	};
+
 	useEffect(() => {
 		if (!open) { return; }
 		const handler = (e: MouseEvent) => {
 			if (ref.current && !ref.current.contains(e.target as Node)) {
-				setOpen(false);
+				close();
 			}
 		};
 		document.addEventListener('click', handler);
 		return () => document.removeEventListener('click', handler);
 	}, [open]);
 
+	// Focus the filter input when the searchable picker opens.
+	useEffect(() => {
+		if (!open || !searchable) { return; }
+		const raf = requestAnimationFrame(() => searchRef.current?.focus());
+		return () => cancelAnimationFrame(raf);
+	}, [open, searchable]);
+
+	// Ranked flat list while filtering: match against the full value
+	// ("provider:name") so provider names match too; display shows the
+	// trimmed name with hits shifted by the prefix offset (as in @-mentions).
+	const searchResults = useMemo(() => {
+		const query = filter.trim();
+		if (variant !== 'model' || !query) { return null; }
+		return fuzzyFilter(query, selector.options, (o) => o.value);
+	}, [variant, filter, selector.options]);
+
+	// Keep the keyboard-selected item visible.
+	useEffect(() => {
+		if (!searchResults) { return; }
+		ref.current?.querySelector('.config-picker-item.selected')?.scrollIntoView({ block: 'nearest' });
+	}, [selectedIndex, searchResults]);
+
 	const handleSelect = (value: string) => {
 		onSelect(selector.id, value);
-		setOpen(false);
+		close();
 	};
 
-	const renderPickerItem = (opt: ConfigOption, dotOverride?: string | null) => {
+	const handleSearchKeyDown = (e: KeyboardEvent) => {
+		const items = searchResults ?? [];
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			setSelectedIndex((i) => Math.min(i + 1, items.length - 1));
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			setSelectedIndex((i) => Math.max(i - 1, 0));
+		} else if (e.key === 'Enter') {
+			e.preventDefault();
+			const pick = items[selectedIndex];
+			if (pick) { handleSelect(pick.item.value); }
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			close();
+		}
+	};
+
+	const renderPickerItem = (
+		opt: ConfigOption,
+		dotOverride?: string | null,
+		extra?: { nameIndices?: number[]; providerTag?: string | null; selected?: boolean },
+	) => {
 		const isCurrent = opt.value === selector.currentValue;
 		const dotColor = dotOverride ?? (variant === 'mode' ? modeColor(opt.value, modeColorIndex) : null);
 		return (
 			<button
 				key={opt.value}
-				class={`config-picker-item${isCurrent ? ' current' : ''}`}
+				class={`config-picker-item${isCurrent ? ' current' : ''}${extra?.selected ? ' selected' : ''}`}
 				onClick={(e) => { e.stopPropagation(); handleSelect(opt.value); }}
 				title={opt.description}
 			>
@@ -841,7 +896,10 @@ function ConfigDropdown({ selector, modeColorIndex, onSelect, disabled, accent, 
 						style={{ background: dotColor ?? MODE_COLORS[0] }}
 					/>
 				)}
-				<span class="config-picker-name">{opt.name}</span>
+				<span class="config-picker-name">
+					{extra?.nameIndices ? <Highlighted text={opt.name} indices={extra.nameIndices} /> : opt.name}
+				</span>
+				{extra?.providerTag && <span class="config-picker-provider">{extra.providerTag}</span>}
 				{isCurrent && (
 					<svg class="config-check" width="12" height="12" viewBox="0 0 12 12" fill="none">
 						<path d="M2.5 6.5l2.5 2.5 4.5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
@@ -916,9 +974,36 @@ function ConfigDropdown({ selector, modeColorIndex, onSelect, disabled, accent, 
 			{open && (
 				<div class="config-picker">
 					<div class="config-picker-title">{selector.label}</div>
-					{variant === 'model'
-						? renderModelGrouped()
-						: selector.options.map((opt) => renderPickerItem(opt))
+					{searchable && (
+						<input
+							class="config-picker-search"
+							ref={searchRef}
+							type="text"
+							value={filter}
+							placeholder="Filter models…"
+							onInput={(e) => { setFilter((e.target as HTMLInputElement).value); setSelectedIndex(0); }}
+							onKeyDown={handleSearchKeyDown}
+						/>
+					)}
+					{searchResults
+						? (searchResults.length === 0
+							? <div class="config-picker-empty">No matches</div>
+							: searchResults.map(({ item: opt, match }, idx) => {
+								const { provider: p } = parseModelValue(opt.value);
+								const prefixLen = p ? p.length + 1 : 0;
+								return renderPickerItem(
+									{ ...opt, name: opt.value.slice(prefixLen) },
+									null,
+									{
+										nameIndices: match.indices.filter((i) => i >= prefixLen).map((i) => i - prefixLen),
+										providerTag: p,
+										selected: idx === selectedIndex,
+									},
+								);
+							}))
+						: variant === 'model'
+							? renderModelGrouped()
+							: selector.options.map((opt) => renderPickerItem(opt))
 					}
 				</div>
 			)}

@@ -304,3 +304,61 @@
 	color: var(--ct-accent);
 	opacity: 0.8;
 }
+
+/* Filter input (model picker) — pinned to the top while the list scrolls */
+.config-picker-search {
+	position: sticky;
+	top: 0;
+	flex-shrink: 0;
+	align-self: stretch;
+	margin: 0 var(--ct-space-2xs) var(--ct-space-2xs);
+	background: var(--ct-bg-input);
+	border: 1px solid var(--ct-dropdown-border);
+	border-radius: var(--ct-radius-sm);
+	color: var(--ct-dropdown-fg);
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-xs);
+	padding: var(--ct-space-2xs) var(--ct-space-sm);
+	outline: none;
+}
+
+.config-picker-search:focus {
+	border-color: var(--ct-border-focus, var(--ct-dropdown-border));
+}
+
+.config-picker-search::placeholder {
+	color: var(--ct-text-muted);
+	opacity: 0.8;
+}
+
+/* Keyboard-selected item in the filtered list */
+.config-picker-item.selected {
+	background: var(--ct-bg-hover);
+}
+
+/* Provider tag shown per row when the grouped list is flattened by a filter */
+.config-picker-provider {
+	flex-shrink: 0;
+	color: var(--ct-text-muted);
+	font-size: calc(var(--ct-text-xs) - 1px);
+	opacity: 0.7;
+}
+
+/* Fuzzy highlight inside picker items — same pattern as .mention-item */
+.config-picker-item .fuzzy-hit {
+	background: transparent;
+	color: var(--ct-text-primary);
+	font-weight: 700;
+	text-decoration: underline;
+	text-decoration-color: color-mix(in srgb, var(--ct-mode, var(--ct-border-focus)) 70%, transparent);
+	text-underline-offset: 2px;
+	text-decoration-thickness: 1px;
+}
+
+.config-picker-empty {
+	font-family: var(--ct-font-sans);
+	font-size: var(--ct-text-xs);
+	color: var(--ct-text-muted);
+	padding: var(--ct-space-xs) var(--ct-space-md);
+	user-select: none;
+}
